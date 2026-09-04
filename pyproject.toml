@@ -1,0 +1,24 @@
+[project]
+name = "yt-music-tui-py"
+version = "0.1.0"
+description = "A Python port of yt-music-tui — a terminal UI for YouTube Music."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.58",
+    "ytmusicapi>=1.8",
+    "yt-dlp>=2024.8.6",
+    "numpy>=1.26",
+    "cryptography>=42",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+yt-music-tui = "yt_music_tui.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["yt_music_tui*"]

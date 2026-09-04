@@ -1,0 +1,462 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Optional
+
+from textual import events
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Input, ProgressBar, Static
+
+from ..auth.session import AuthSession
+from ..config import AppConfig
+from ..models import Track
+from ..services.audio.player import AudioPlayerService
+from ..services.lyrics_service import LyricsService
+from ..services.music_service import MusicService
+from .state import AppState, FullScreenMode, LeftFocus
+from .widgets import (
+    BarVisualizerPanel,
+    CoverArtPanel,
+    HeaderBar,
+    LyricsPanel,
+    PlaylistsPanel,
+    QuickActionsBar,
+    TracksPanel,
+)
+
+_CSS = """
+Screen {
+    layout: vertical;
+    background: $surface;
+}
+
+#header {
+    height: 3;
+    border: round $primary;
+    padding: 0 1;
+}
+
+#search-input {
+    height: 3;
+    border: round $accent;
+    display: none;
+}
+#search-input.visible {
+    display: block;
+}
+
+#body {
+    height: 1fr;
+}
+
+#left {
+    width: 28;
+}
+#left.hidden {
+    display: none;
+}
+
+#tracks {
+    height: 60%;
+}
+#playlists {
+    height: 40%;
+}
+
+#center {
+    width: 1fr;
+}
+#center.hidden {
+    display: none;
+}
+
+#cover {
+    height: 65%;
+    border: round $primary;
+}
+#bar {
+    height: 35%;
+    border: round $primary;
+}
+
+#lyrics {
+    width: 34;
+}
+#lyrics.hidden {
+    display: none;
+}
+#lyrics.fill {
+    width: 1fr;
+}
+
+#player {
+    height: 4;
+}
+#player-info {
+    height: 3;
+    border: round $primary;
+    padding: 0 1;
+}
+#player-gauge {
+    height: 1;
+}
+
+#quickactions {
+    height: 1;
+    color: $text-muted;
+    padding: 0 1;
+}
+"""
+
+
+class MusicApp(App[None]):
+    """Textual port of App/MusicApp.cs — same state machine and keybindings, driven by
+    Textual's own async event loop instead of a hand-rolled poll/redraw loop."""
+
+    CSS = _CSS
+    TITLE = "YT Music TUI"
+
+    def __init__(
+        self,
+        config: AppConfig,
+        music: MusicService,
+        player: AudioPlayerService,
+        lyrics: LyricsService,
+        auth: AuthSession,
+    ) -> None:
+        super().__init__()
+        self._config = config
+        self._music = music
+        self._player = player
+        self._lyrics = lyrics
+        self._auth = auth
+        self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
+        self._lyrics_request_id = 0
+
+    def compose(self) -> ComposeResult:
+        yield HeaderBar(self.state, self._config.app_name, id="header")
+        yield Input(placeholder="Search…", id="search-input")
+        with Horizontal(id="body"):
+            with Vertical(id="left"):
+                yield TracksPanel(self.state, id="tracks")
+                yield PlaylistsPanel(self.state, id="playlists")
+            with Vertical(id="center"):
+                yield CoverArtPanel(self.state, id="cover")
+                yield BarVisualizerPanel(self.state, id="bar")
+            yield LyricsPanel(self.state, id="lyrics")
+        with Vertical(id="player"):
+            yield Static(id="player-info")
+            yield ProgressBar(id="player-gauge", total=1000, show_eta=False)
+        yield QuickActionsBar(id="quickactions")
+
+    async def on_mount(self) -> None:
+        # Only the search Input should ever hold real focus; everywhere else our own on_key
+        # drives selection (j/k/tab/etc.), matching the original's single global input handler.
+        self.query_one("#search-input", Input).can_focus = False
+        self.set_focus(None)
+
+        self._apply_layout()
+        self.set_interval(self._config.tick_ms / 1000, self._on_tick)
+        await self._load_initial_data()
+        self.refresh_all()
+
+    async def on_unmount(self) -> None:
+        await self._player.dispose()
+        await self._lyrics.aclose()
+
+    # ---- data loading -------------------------------------------------
+
+    async def _load_initial_data(self) -> None:
+        s = self.state
+        try:
+            s.library_tracks = await self._music.get_library_tracks()
+            s.playlists = await self._music.get_library_playlists()
+            s.status_message = (
+                f"Auth OK · {self._auth.status_detail}"
+                if self._auth.is_authenticated
+                else f"Auth: {self._auth.status_label} · {self._auth.status_detail}"
+            )
+        except Exception as ex:
+            s.status_message = f"Couldn't load library: {ex}"
+
+    # ---- player tick ----------------------------------------------------
+
+    def _on_tick(self) -> None:
+        s = self.state
+        before = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
+        self._player.tick()
+        self._sync_player_state()
+        after = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
+        if before != after:
+            self.refresh_all()
+
+    def _sync_player_state(self) -> None:
+        s = self.state
+        previous_id = s.now_playing.id if s.now_playing else None
+
+        s.now_playing = self._player.current
+        s.is_playing = self._player.is_playing
+        s.position_seconds = self._player.position_seconds
+        s.duration_seconds = self._player.duration_seconds
+        s.queue = self._player.queue
+        s.visualizer_levels = self._player.visualizer_levels
+
+        new_id = s.now_playing.id if s.now_playing else None
+        if new_id != previous_id:
+            self._trigger_lyrics_fetch(s.now_playing)
+
+    def _trigger_lyrics_fetch(self, track: Optional[Track]) -> None:
+        self.state.lyrics = None
+        if track is None:
+            return
+
+        self._lyrics_request_id += 1
+        request_id = self._lyrics_request_id
+
+        async def fetch() -> None:
+            lyrics = await self._lyrics.get_lyrics(track.title, track.artist, track.duration)
+            if request_id == self._lyrics_request_id:
+                self.state.lyrics = lyrics
+                self.refresh_all()
+
+        asyncio.ensure_future(fetch())
+
+    # ---- key handling -----------------------------------------------------
+
+    async def on_key(self, event: events.Key) -> None:
+        s = self.state
+
+        if s.is_searching:
+            # The Input widget owns typing/backspace/enter; we only need to intercept Escape.
+            if event.key == "escape":
+                await self._cancel_search()
+                event.stop()
+            return
+
+        if event.key == "q":
+            self.exit()
+            return
+
+        if event.key == "escape":
+            if s.is_showing_search_results:
+                s.is_showing_search_results = False
+                s.tracks_selected_index = 0
+                s.status_message = "Back to library"
+                self.refresh_all()
+            return
+
+        if event.key == "slash":
+            s.is_searching = True
+            s.search_query = ""
+            s.status_message = "Search — type and press Enter"
+            search_input = self.query_one("#search-input", Input)
+            search_input.value = ""
+            search_input.add_class("visible")
+            search_input.can_focus = True
+            search_input.focus()
+            self.refresh_all()
+            event.stop()
+            return
+
+        if event.key == "tab":
+            s.left_focus = LeftFocus.PLAYLISTS if s.left_focus == LeftFocus.TRACKS else LeftFocus.TRACKS
+            self.refresh_all()
+            return
+
+        if event.key == "f":
+            s.full_screen_mode = {
+                FullScreenMode.NONE: FullScreenMode.COVER_BAR,
+                FullScreenMode.COVER_BAR: FullScreenMode.LYRICS,
+                FullScreenMode.LYRICS: FullScreenMode.NONE,
+            }[s.full_screen_mode]
+            self._apply_layout()
+            self.refresh_all()
+            return
+
+        if event.key == "c":
+            s.is_sidebar_collapsed = not s.is_sidebar_collapsed
+            self._apply_layout()
+            self.refresh_all()
+            return
+
+        if event.key in ("j", "down"):
+            self._move_selection(1)
+            self.refresh_all()
+            return
+
+        if event.key in ("k", "up"):
+            self._move_selection(-1)
+            self.refresh_all()
+            return
+
+        if event.key == "space":
+            await self._player.toggle_pause()
+            self._sync_player_state()
+            s.status_message = self._player.last_error or ("Resumed" if s.is_playing else "Paused")
+            self.refresh_all()
+            return
+
+        if event.key == "n":
+            await self._player.next_track()
+            self._sync_player_state()
+            s.status_message = self._player.last_error or "Next track"
+            self.refresh_all()
+            return
+
+        if event.key == "p":
+            await self._player.previous_track()
+            self._sync_player_state()
+            s.status_message = self._player.last_error or "Previous track"
+            self.refresh_all()
+            return
+
+        if event.key == "enter":
+            await self._play_selection()
+            self.refresh_all()
+            return
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "search-input":
+            return
+
+        s = self.state
+        s.is_searching = False
+        s.search_query = event.value
+        event.input.remove_class("visible")
+        event.input.can_focus = False
+        self.set_focus(None)
+
+        if not s.search_query.strip():
+            s.status_message = "Empty query"
+            s.is_showing_search_results = False
+        else:
+            s.is_showing_search_results = True
+            try:
+                results = await self._music.search(s.search_query)
+                s.search_results = results.tracks
+                s.tracks_selected_index = 0
+                s.left_focus = LeftFocus.TRACKS
+                s.status_message = f"{len(results.tracks)} track(s)"
+            except Exception as ex:
+                s.search_results = []
+                s.status_message = f"Search failed: {ex}"
+
+        self.refresh_all()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "search-input":
+            self.state.search_query = event.value
+
+    async def _cancel_search(self) -> None:
+        s = self.state
+        s.is_searching = False
+        s.status_message = "Search cancelled"
+        search_input = self.query_one("#search-input", Input)
+        search_input.remove_class("visible")
+        search_input.can_focus = False
+        self.set_focus(None)
+        self.refresh_all()
+
+    def _move_selection(self, delta: int) -> None:
+        s = self.state
+        if s.left_focus == LeftFocus.TRACKS:
+            count = len(s.displayed_tracks)
+            if count == 0:
+                return
+            s.tracks_selected_index = max(0, min(s.tracks_selected_index + delta, count - 1))
+        else:
+            count = len(s.playlists)
+            if count == 0:
+                return
+            s.playlists_selected_index = max(0, min(s.playlists_selected_index + delta, count - 1))
+
+    async def _play_selection(self) -> None:
+        s = self.state
+        if s.left_focus == LeftFocus.PLAYLISTS:
+            if not s.playlists:
+                s.status_message = "No playlists"
+                return
+
+            playlist = s.playlists[s.playlists_selected_index]
+            try:
+                tracks = await self._music.get_playlist_tracks(playlist.id)
+            except Exception as ex:
+                s.status_message = f"Couldn't load playlist: {ex}"
+                return
+
+            if not tracks:
+                s.status_message = "Playlist has no tracks"
+                return
+
+            await self._player.play_queue(tracks, 0)
+        else:
+            tracks = s.displayed_tracks
+            if not tracks:
+                s.status_message = "Nothing to play"
+                return
+
+            await self._player.play_queue(tracks, s.tracks_selected_index)
+
+        self._sync_player_state()
+        s.status_message = self._player.last_error or (
+            f"Playing {s.now_playing.title}" if s.now_playing else "Playing"
+        )
+
+    # ---- layout ------------------------------------------------------------
+
+    def _apply_layout(self) -> None:
+        s = self.state
+        left = self.query_one("#left")
+        center = self.query_one("#center")
+        lyrics = self.query_one("#lyrics")
+
+        if s.full_screen_mode == FullScreenMode.LYRICS:
+            left.add_class("hidden")
+            center.add_class("hidden")
+            lyrics.remove_class("hidden")
+            lyrics.add_class("fill")
+        elif s.full_screen_mode == FullScreenMode.COVER_BAR or s.is_sidebar_collapsed:
+            left.add_class("hidden")
+            center.remove_class("hidden")
+            lyrics.add_class("hidden")
+            lyrics.remove_class("fill")
+        else:
+            left.remove_class("hidden")
+            center.remove_class("hidden")
+            lyrics.remove_class("hidden")
+            lyrics.remove_class("fill")
+
+    # ---- rendering -----------------------------------------------------------
+
+    def refresh_all(self) -> None:
+        self.query_one(HeaderBar).refresh_content()
+        self.query_one(TracksPanel).refresh_content()
+        self.query_one(PlaylistsPanel).refresh_content()
+        self.query_one(CoverArtPanel).refresh_content()
+        self.query_one(BarVisualizerPanel).refresh_content()
+        self.query_one(LyricsPanel).refresh_content()
+        self.query_one(QuickActionsBar).refresh_content()
+        self._refresh_player_bar()
+
+    def _refresh_player_bar(self) -> None:
+        s = self.state
+        status = "Playing" if s.is_playing else "Paused"
+        line = (
+            f"{status}  ·  {s.now_playing.title} — {s.now_playing.artist}"
+            if s.now_playing
+            else "Nothing playing  ·  Enter play · Space pause · n/p skip"
+        )
+        pos = _format_seconds(s.position_seconds)
+        dur = _format_seconds(s.duration_seconds)
+        info = self.query_one("#player-info", Static)
+        info.border_title = "Now Playing"
+        info.update(f"{line}  [{pos} / {dur}]")
+        self.query_one("#player-gauge", ProgressBar).update(progress=s.progress_ratio * 1000)
+
+
+def _format_seconds(total_seconds: float) -> str:
+    total = max(0, int(total_seconds))
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
