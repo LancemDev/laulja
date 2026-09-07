@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-import numpy as np
-
 from ..models import Lyrics, Playlist, Track
 
 
@@ -45,7 +43,7 @@ class AppState:
     duration_seconds: float = 0.0
     visualizer_levels: List[int] = field(default_factory=list)
     lyrics: Optional[Lyrics] = None
-    cover_art: Optional[np.ndarray] = None
+    cover_art: Optional[bytes] = None
 
     auth_label: str = "not signed in"
     is_authenticated: bool = False

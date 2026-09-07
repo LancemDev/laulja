@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import io
 from datetime import timedelta
 from typing import Optional
 
 from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Static
+from textual_image.widget import Image as CoverImage
 
-from .image_render import render_half_blocks
 from .listing import ListPanel
 from .state import AppState, LeftFocus
 
@@ -181,26 +184,52 @@ class LyricsPanel(ListPanel):
         return index
 
 
-class CoverArtPanel(Static):
+class CoverArtPanel(Vertical):
+    """Shows the track's real thumbnail via textual-image, which picks the best rendering the
+    terminal actually supports (Kitty/Sixel graphics for a true bitmap, falling back to colored
+    half-cells or plain unicode) — so this needs no image logic of its own, just a status text
+    fallback for when there's nothing to show yet."""
+
     DEFAULT_CSS = """
     CoverArtPanel {
+        align: center middle;
+    }
+    CoverArtPanel > #cover-image {
+        width: auto;
+        height: auto;
+    }
+    CoverArtPanel > .hidden {
+        display: none;
+    }
+    CoverArtPanel > #cover-status {
         content-align: center middle;
         text-align: center;
+        width: 1fr;
+        height: 1fr;
     }
     """
 
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
-        self._render_cache_key: Optional[tuple] = None
+        self._shown_key: Optional[tuple] = None
+
+    def compose(self) -> ComposeResult:
+        yield CoverImage(id="cover-image", classes="hidden")
+        yield Static(id="cover-status")
 
     def refresh_content(self) -> None:
         self.border_title = "Now Playing"
         track = self.state.now_playing
         art = self.state.cover_art
+        image_widget = self.query_one("#cover-image", CoverImage)
+        status_widget = self.query_one("#cover-status", Static)
 
         if track is None or art is None:
-            self._render_cache_key = None
+            if self._shown_key is not None:
+                image_widget.add_class("hidden")
+                image_widget.image = None
+                self._shown_key = None
             if track is None:
                 lines = ["Nothing playing", "Press Enter on a track to start"]
             else:
@@ -209,17 +238,16 @@ class CoverArtPanel(Static):
                     lines.append(track.album)
                 lines.append("")
                 lines.append("Loading cover art…" if track.thumbnail_url else "(no cover art)")
-            self.update("\n".join(lines))
+            status_widget.remove_class("hidden")
+            status_widget.update("\n".join(lines))
             return
 
-        cols, rows = int(self.size.width), int(self.size.height)
-        if cols <= 0 or rows <= 0:
-            return
-
-        key = (track.id, cols, rows, id(art))
-        if key != self._render_cache_key:
-            self.update(render_half_blocks(art, cols, rows))
-            self._render_cache_key = key
+        key = (track.id, id(art))
+        if key != self._shown_key:
+            image_widget.image = io.BytesIO(art)
+            image_widget.remove_class("hidden")
+            status_widget.add_class("hidden")
+            self._shown_key = key
 
 
 _BAR_BLOCKS = " ▁▂▃▄▅▆▇█"
