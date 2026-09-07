@@ -153,43 +153,20 @@ class LyricsPanel(ListPanel):
             return
         self._rendered_key = key
 
-        # Pad top and bottom with blank rows so the active line can sit at vertical center even
-        # right at the start or end of the song, instead of getting pinned to the panel's edge
-        # once scrolling has nowhere further to go.
+        # Only the line being sung right now — not the lines around it. Padded with blank rows
+        # top and bottom (half the panel height each) so it still sits at vertical center even
+        # right at the start or end of the song, and animated so it settles into place each time
+        # rather than hard-cutting, but nothing else is shown at the same time.
         pad = height // 2
         text = Text(justify="center")
-        active_row = 0
-        row = 0
+        if pad:
+            text.append("\n" * pad)
+        line_text = (lyrics.lines[active].text or " ").upper()
+        text.append(line_text, style="bold cyan1")
+        if pad:
+            text.append("\n" * pad)
 
-        def blank_rows(n: int) -> None:
-            nonlocal row
-            for _ in range(n):
-                if row:
-                    text.append("\n")
-                row += 1
-
-        blank_rows(pad)
-        for i, line in enumerate(lyrics.lines):
-            if row:
-                text.append("\n")
-            row += 1
-            if i == active:
-                active_row = row - 1
-
-            distance = abs(i - active)
-            if i == active:
-                style = "bold cyan1"
-            elif distance == 1:
-                style = "grey70"
-            else:
-                style = "grey50" if distance == 2 else "grey35"
-            text.append(line.text or " ", style=style)
-
-            if i != len(lyrics.lines) - 1:
-                blank_rows(1)  # breathing room between lines
-        blank_rows(pad)
-
-        self.set_lines(text, active_row, row, center=True, animate=True)
+        self.set_lines(text, pad, pad * 2 + 1, center=True, animate=True)
 
     def _current_line_index(self, lyrics) -> Optional[int]:
         position = timedelta(seconds=self.state.position_seconds)
