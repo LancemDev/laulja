@@ -26,7 +26,7 @@ def render_half_blocks(pixels: np.ndarray, cols: int, rows: int) -> Text:
     fit_w = max(1, int(src_w * scale))
     fit_h = max(2, int(src_h * scale) & ~1)  # even, so it splits evenly into half-block rows
 
-    resized = _resample_nearest(pixels, fit_w, fit_h)
+    resized = _resize_area(pixels, fit_w, fit_h)
 
     pad_x = (cols - fit_w) // 2
     fit_rows = fit_h // 2
@@ -53,8 +53,23 @@ def render_half_blocks(pixels: np.ndarray, cols: int, rows: int) -> Text:
     return text
 
 
-def _resample_nearest(pixels: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
+def _resize_area(pixels: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
+    """Box-filter resize: each output pixel is the mean of the source pixels it covers, not a
+    single sampled one. A terminal cell is tiny next to a decoded thumbnail (rows of it map
+    down to one character), so nearest-neighbor sampling just picks a near-random pixel per
+    cell — blotchy, blocky, and prone to landing on one oddly-colored pixel. Averaging the
+    whole covered block gives a smooth, representative color instead."""
     src_h, src_w = pixels.shape[:2]
-    xs = (np.arange(out_w) * src_w // out_w).clip(0, src_w - 1)
-    ys = (np.arange(out_h) * src_h // out_h).clip(0, src_h - 1)
-    return pixels[ys][:, xs]
+    x_edges = np.arange(out_w + 1) * src_w / out_w
+    y_edges = np.arange(out_h + 1) * src_h / out_h
+
+    out = np.empty((out_h, out_w, 3), dtype=np.uint8)
+    for row in range(out_h):
+        y0 = int(y_edges[row])
+        y1 = min(src_h, max(y0 + 1, int(round(y_edges[row + 1]))))
+        for col in range(out_w):
+            x0 = int(x_edges[col])
+            x1 = min(src_w, max(x0 + 1, int(round(x_edges[col + 1]))))
+            out[row, col] = pixels[y0:y1, x0:x1].mean(axis=(0, 1)).round()
+
+    return out
