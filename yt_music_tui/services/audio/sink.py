@@ -15,7 +15,7 @@ def start(sample_rate: int, channels: int) -> Optional[subprocess.Popen]:
         _try_start(
             "pw-play",
             [
-                "--container", "raw", "--format", "s16",
+                "--raw", "--format", "s16",
                 "--rate", str(sample_rate), "--channels", str(channels), "-",
             ],
         )
