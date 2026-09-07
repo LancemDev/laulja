@@ -4,10 +4,12 @@ import io
 from datetime import timedelta
 from typing import Optional
 
+from PIL import Image as PILImage, ImageOps
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
+from textual_image._terminal import get_cell_size
 from textual_image.widget import Image as CoverImage
 
 from .listing import ListPanel
@@ -212,6 +214,8 @@ class CoverArtPanel(Vertical):
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self._source_image: Optional[PILImage.Image] = None
+        self._source_key: Optional[tuple] = None
         self._shown_key: Optional[tuple] = None
 
     def compose(self) -> ComposeResult:
@@ -228,6 +232,8 @@ class CoverArtPanel(Vertical):
             if self._shown_key is not None:
                 image_widget.add_class("hidden")
                 image_widget.image = None
+                self._source_image = None
+                self._source_key = None
                 self._shown_key = None
             if track is None:
                 lines = ["Nothing playing", "Press Enter on a track to start"]
@@ -241,9 +247,25 @@ class CoverArtPanel(Vertical):
             status_widget.update("\n".join(lines))
             return
 
-        key = (track.id, id(art))
+        cols, rows = int(self.size.width), int(self.size.height)
+        if cols <= 0 or rows <= 0:
+            return
+
+        source_key = (track.id, id(art))
+        if source_key != self._source_key:
+            self._source_image = PILImage.open(io.BytesIO(art)).convert("RGB")
+            self._source_key = source_key
+
+        # Crop to the panel's exact pixel aspect ratio (like CSS `object-fit: cover`) instead of
+        # stretching the whole image to fit or letterboxing it — keeps the photo undistorted and
+        # leaves no background-colored gap for the panel/border color to show through.
+        key = (*source_key, cols, rows)
         if key != self._shown_key:
-            image_widget.image = io.BytesIO(art)
+            cell_w, cell_h = get_cell_size()
+            target = (max(1, cols * cell_w), max(1, rows * cell_h))
+            fitted = ImageOps.fit(self._source_image, target, method=PILImage.Resampling.LANCZOS)
+
+            image_widget.image = fitted
             image_widget.remove_class("hidden")
             status_widget.add_class("hidden")
             self._shown_key = key
