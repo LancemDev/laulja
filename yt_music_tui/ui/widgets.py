@@ -30,7 +30,9 @@ def _spinner() -> str:
     return _SPINNER_FRAMES[int(time.monotonic() * 10) % len(_SPINNER_FRAMES)]
 
 
-_BIG_TEXT_FONT = "smblock"  # solid Unicode block glyphs — reads as bold/chunky, not thin ASCII
+_BIG_TEXT_FONT = "double_blocky"  # solid block glyphs, only 2 rows tall — a terminal row is
+# about twice as tall as a column, so a 4-row font (smblock) rendered letters looking stretched
+# tall; this stays legible and bold without the elongation.
 
 
 def _big_text_rows(text: str, width: int) -> list[str]:
