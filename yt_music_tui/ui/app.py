@@ -108,6 +108,19 @@ Screen {
     color: $text-muted;
     padding: 0 1;
 }
+
+/* Minimalism mode ("m"): strip panel borders/padding and hide the hint bar, leaving just
+   content — tracks/playlists/lyrics/player-info otherwise carry the same border as before. */
+Screen.minimal #tracks,
+Screen.minimal #playlists,
+Screen.minimal #lyrics,
+Screen.minimal #player-info {
+    border: none;
+    padding: 0;
+}
+Screen.minimal #quickactions {
+    display: none;
+}
 """
 
 
@@ -316,6 +329,12 @@ class MusicApp(App[None]):
         if event.key == "c":
             s.is_sidebar_collapsed = not s.is_sidebar_collapsed
             self._apply_layout()
+            self.refresh_all()
+            return
+
+        if event.key == "m":
+            s.is_minimal = not s.is_minimal
+            self.screen.set_class(s.is_minimal, "minimal")
             self.refresh_all()
             return
 

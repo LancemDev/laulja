@@ -315,5 +315,5 @@ class QuickActionsBar(Static):
     def refresh_content(self) -> None:
         self.update(
             "Tab focus  |  j/k move  |  Enter play  |  Space pause  |  n/p next/prev  |  "
-            "/ search  |  f fullscreen  |  c collapse  |  q quit"
+            "/ search  |  f fullscreen  |  c collapse  |  m minimal  |  q quit"
         )

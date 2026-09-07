@@ -28,6 +28,7 @@ class AppState:
     left_focus: LeftFocus = LeftFocus.TRACKS
     full_screen_mode: FullScreenMode = FullScreenMode.NONE
     is_sidebar_collapsed: bool = False
+    is_minimal: bool = False
 
     tracks_selected_index: int = 0
     playlists_selected_index: int = 0

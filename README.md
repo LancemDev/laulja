@@ -55,6 +55,7 @@ n / p      next / previous track
 Esc        back to library from search results
 f          cycle fullscreen: normal → cover+bar → lyrics → normal
 c          collapse the sidebar
+m          toggle minimalism (strip panel borders and the hint bar)
 q          quit
 ```
 
