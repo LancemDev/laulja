@@ -4,6 +4,7 @@ import io
 from datetime import timedelta
 from typing import Optional
 
+from PIL import Image as PILImage, ImageOps
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -189,13 +190,21 @@ class CoverArtPanel(Vertical):
     half-cells or plain unicode) — so this needs no image logic of its own, just a status text
     fallback for when there's nothing to show yet."""
 
+    # Terminal font cells are almost universally close to this width:height ratio (it's even
+    # the library's own hardcoded fallback). Used to crop art to the panel's true shape instead
+    # of querying the terminal for its exact cell pixel size — that query is documented as flaky
+    # ("keystrokes during reading the response can lead to false answers") and a bad reading
+    # previously showed up as real, visible stretching. This fixed ratio trades perfect accuracy
+    # for reliability: worst case a few percent off (imperceptible), never wildly wrong.
+    _CELL_ASPECT = 0.5  # cell width / cell height
+
     DEFAULT_CSS = """
     CoverArtPanel {
         align: center middle;
     }
     CoverArtPanel > #cover-image {
-        width: auto;
-        height: auto;
+        width: 100%;
+        height: 100%;
     }
     CoverArtPanel > .hidden {
         display: none;
@@ -211,6 +220,8 @@ class CoverArtPanel(Vertical):
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self._source_image: Optional[PILImage.Image] = None
+        self._source_key: Optional[tuple] = None
         self._shown_key: Optional[tuple] = None
 
     def compose(self) -> ComposeResult:
@@ -227,6 +238,8 @@ class CoverArtPanel(Vertical):
             if self._shown_key is not None:
                 image_widget.add_class("hidden")
                 image_widget.image = None
+                self._source_image = None
+                self._source_key = None
                 self._shown_key = None
             if track is None:
                 lines = ["Nothing playing", "Press Enter on a track to start"]
@@ -240,15 +253,24 @@ class CoverArtPanel(Vertical):
             status_widget.update("\n".join(lines))
             return
 
-        # `auto`/`auto` sizing: textual-image scales to the source image's own aspect ratio
-        # algebraically, so it can never come out stretched regardless of how accurately it
-        # guessed the terminal's font-cell pixel size — only the scale is at risk there, never
-        # the shape. (An earlier attempt pre-cropped to a size computed from that same guess,
-        # which meant a bad guess showed up as real distortion instead.) Any sliver of unfilled
-        # panel uses the art-derived theme's background, so it isn't a jarring mismatched frame.
-        key = (track.id, id(art))
+        cols, rows = int(self.size.width), int(self.size.height)
+        if cols <= 0 or rows <= 0:
+            return
+
+        source_key = (track.id, id(art))
+        if source_key != self._source_key:
+            self._source_image = PILImage.open(io.BytesIO(art)).convert("RGB")
+            self._source_key = source_key
+
+        # Crop to the panel's shape (like CSS `object-fit: cover`) so it fills completely at
+        # full size, undistorted — using the fixed cell-aspect assumption above, not a live
+        # terminal query, for the target ratio.
+        key = (*source_key, cols, rows)
         if key != self._shown_key:
-            image_widget.image = io.BytesIO(art)
+            target = (cols, max(1, round(rows / self._CELL_ASPECT)))
+            fitted = ImageOps.fit(self._source_image, target, method=PILImage.Resampling.LANCZOS)
+
+            image_widget.image = fitted
             image_widget.remove_class("hidden")
             status_widget.add_class("hidden")
             self._shown_key = key
