@@ -226,6 +226,13 @@ _BAR_BLOCKS = " ▁▂▃▄▅▆▇█"
 
 
 class BarVisualizerPanel(Static):
+    DEFAULT_CSS = """
+    BarVisualizerPanel {
+        content-align: center middle;
+        text-align: center;
+    }
+    """
+
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
