@@ -462,9 +462,9 @@ class MusicApp(App[None]):
 
     def _refresh_player_bar(self) -> None:
         s = self.state
-        status = "Playing" if s.is_playing else "Paused"
+        icon = "▶" if s.is_playing else "⏸"
         line = (
-            f"{status}  ·  {s.now_playing.title} — {s.now_playing.artist}"
+            f"{icon}  {s.now_playing.title} — {s.now_playing.artist}"
             if s.now_playing
             else "Nothing playing  ·  Enter play · Space pause · n/p skip"
         )
