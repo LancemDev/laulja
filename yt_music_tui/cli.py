@@ -8,6 +8,7 @@ from .auth.service import AuthService
 from .auth.session import AuthSession
 from .config import AppConfig
 from .services.audio.player import AudioPlayerService
+from .services.cover_art_service import CoverArtService
 from .services.lyrics_service import LyricsService
 from .services.music_service import MusicService
 
@@ -43,15 +44,17 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
     music = MusicService(client)
     player = AudioPlayerService(music)
     lyrics = LyricsService()
+    cover_art = CoverArtService()
 
     from .ui.app import MusicApp
 
-    app = MusicApp(config, music, player, lyrics, session)
+    app = MusicApp(config, music, player, lyrics, cover_art, session)
     try:
         await app.run_async()
     finally:
         await player.dispose()
         await lyrics.aclose()
+        await cover_art.aclose()
 
 
 async def _ensure_authenticated(

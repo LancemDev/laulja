@@ -12,6 +12,7 @@ from ..auth.session import AuthSession
 from ..config import AppConfig
 from ..models import Track
 from ..services.audio.player import AudioPlayerService
+from ..services.cover_art_service import CoverArtService
 from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
 from .state import AppState, FullScreenMode, LeftFocus
@@ -77,7 +78,6 @@ Screen {
 }
 #bar {
     height: 35%;
-    border: round $primary;
 }
 
 #lyrics {
@@ -123,6 +123,7 @@ class MusicApp(App[None]):
         music: MusicService,
         player: AudioPlayerService,
         lyrics: LyricsService,
+        cover_art: CoverArtService,
         auth: AuthSession,
     ) -> None:
         super().__init__()
@@ -130,9 +131,11 @@ class MusicApp(App[None]):
         self._music = music
         self._player = player
         self._lyrics = lyrics
+        self._cover_art = cover_art
         self._auth = auth
         self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
         self._lyrics_request_id = 0
+        self._cover_art_request_id = 0
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(self.state, self._config.app_name, id="header")
@@ -164,6 +167,7 @@ class MusicApp(App[None]):
     async def on_unmount(self) -> None:
         await self._player.dispose()
         await self._lyrics.aclose()
+        await self._cover_art.aclose()
 
     # ---- data loading -------------------------------------------------
 
@@ -205,6 +209,7 @@ class MusicApp(App[None]):
         new_id = s.now_playing.id if s.now_playing else None
         if new_id != previous_id:
             self._trigger_lyrics_fetch(s.now_playing)
+            self._trigger_cover_art_fetch(s.now_playing)
 
     def _trigger_lyrics_fetch(self, track: Optional[Track]) -> None:
         self.state.lyrics = None
@@ -218,6 +223,22 @@ class MusicApp(App[None]):
             lyrics = await self._lyrics.get_lyrics(track.title, track.artist, track.duration)
             if request_id == self._lyrics_request_id:
                 self.state.lyrics = lyrics
+                self.refresh_all()
+
+        asyncio.ensure_future(fetch())
+
+    def _trigger_cover_art_fetch(self, track: Optional[Track]) -> None:
+        self.state.cover_art = None
+        if track is None or not track.thumbnail_url:
+            return
+
+        self._cover_art_request_id += 1
+        request_id = self._cover_art_request_id
+
+        async def fetch() -> None:
+            art = await self._cover_art.fetch(track.thumbnail_url)
+            if request_id == self._cover_art_request_id:
+                self.state.cover_art = art
                 self.refresh_all()
 
         asyncio.ensure_future(fetch())

@@ -6,6 +6,7 @@ from typing import Optional
 from rich.text import Text
 from textual.widgets import Static
 
+from .image_render import render_half_blocks
 from .listing import ListPanel
 from .state import AppState, LeftFocus
 
@@ -110,17 +111,15 @@ class LyricsPanel(ListPanel):
             self.set_lines("Loading lyrics…", None, 0)
             return
 
-        current_index = self._current_line_index(lyrics) if lyrics.is_synced else None
+        if not lyrics.is_synced:
+            # No per-line timing to step through — show the plain lyrics block as-is.
+            text = Text("\n".join(line.text for line in lyrics.lines))
+            self.set_lines(text, None, len(lyrics.lines))
+            return
 
-        text = Text()
-        for i, line in enumerate(lyrics.lines):
-            style = "reverse" if i == current_index else ""
-            prefix = "▶ " if i == current_index else "  "
-            if i:
-                text.append("\n")
-            text.append(f"{prefix}{line.text}", style=style)
-
-        self.set_lines(text, current_index, len(lyrics.lines))
+        current_index = self._current_line_index(lyrics)
+        index = current_index if current_index is not None else 0
+        self.set_lines(Text(f"▶ {lyrics.lines[index].text}"), None, 1)
 
     def _current_line_index(self, lyrics) -> Optional[int]:
         position = timedelta(seconds=self.state.position_seconds)
@@ -142,17 +141,34 @@ class CoverArtPanel(Static):
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self._render_cache_key: Optional[tuple] = None
 
     def refresh_content(self) -> None:
         self.border_title = "Now Playing"
         track = self.state.now_playing
-        if track is None:
-            lines = ["Nothing playing", "Press Enter on a track to start"]
-        else:
-            lines = [track.title, track.artist]
-            if track.album:
-                lines.append(track.album)
-        self.update("\n".join(lines))
+        art = self.state.cover_art
+
+        if track is None or art is None:
+            self._render_cache_key = None
+            if track is None:
+                lines = ["Nothing playing", "Press Enter on a track to start"]
+            else:
+                lines = [track.title, track.artist]
+                if track.album:
+                    lines.append(track.album)
+                lines.append("")
+                lines.append("Loading cover art…" if track.thumbnail_url else "(no cover art)")
+            self.update("\n".join(lines))
+            return
+
+        cols, rows = int(self.size.width), int(self.size.height)
+        if cols <= 0 or rows <= 0:
+            return
+
+        key = (track.id, cols, rows, id(art))
+        if key != self._render_cache_key:
+            self.update(render_half_blocks(art, cols, rows))
+            self._render_cache_key = key
 
 
 _BAR_BLOCKS = " ▁▂▃▄▅▆▇█"
@@ -164,7 +180,6 @@ class BarVisualizerPanel(Static):
         self.state = state
 
     def refresh_content(self) -> None:
-        self.border_title = "Bar Visualization"
         levels = self.state.visualizer_levels
         if not levels:
             self.update("")
