@@ -92,11 +92,11 @@ Screen {
 }
 
 #player {
-    height: 4;
+    height: 2;
 }
 #player-info {
-    height: 3;
-    border: round $primary;
+    height: 1;
+    border-left: wide $primary;
     padding: 0 1;
 }
 #player-gauge {
@@ -110,12 +110,13 @@ Screen {
 }
 
 /* Minimalism mode ("m"): strip panel borders/padding and hide the hint bar, leaving just
-   content — tracks/playlists/lyrics/player-info otherwise carry the same border as before. */
+   content — tracks/playlists/lyrics/player-info otherwise carry the same left accent bar as
+   before. */
 Screen.minimal #tracks,
 Screen.minimal #playlists,
 Screen.minimal #lyrics,
 Screen.minimal #player-info {
-    border: none;
+    border-left: none;
     padding: 0;
 }
 Screen.minimal #quickactions {
