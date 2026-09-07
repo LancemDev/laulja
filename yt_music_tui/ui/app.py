@@ -6,6 +6,7 @@ from typing import Optional
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.theme import Theme
 from textual.widgets import Input, ProgressBar, Static
 
 from ..auth.session import AuthSession
@@ -15,6 +16,7 @@ from ..services.audio.player import AudioPlayerService
 from ..services.cover_art_service import CoverArtService
 from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
+from . import art_theme
 from .state import AppState, FullScreenMode, LeftFocus
 from .widgets import (
     BarVisualizerPanel,
@@ -236,11 +238,28 @@ class MusicApp(App[None]):
 
         async def fetch() -> None:
             art = await self._cover_art.fetch(track.thumbnail_url)
-            if request_id == self._cover_art_request_id:
-                self.state.cover_art = art
-                self.refresh_all()
+            if request_id != self._cover_art_request_id:
+                return
+
+            self.state.cover_art = art
+            self.refresh_all()
+
+            if art is not None:
+                theme = await asyncio.to_thread(art_theme.build_theme, art)
+                if theme is not None and request_id == self._cover_art_request_id:
+                    self._apply_art_theme(theme)
 
         asyncio.ensure_future(fetch())
+
+    def _apply_art_theme(self, theme: Theme) -> None:
+        self.register_theme(theme)
+        if self.theme == theme.name:
+            # Re-registering under the same name doesn't retrigger the reactive watcher (the
+            # name string didn't change) — force the CSS variables to recompute so a new track's
+            # colors actually take effect instead of only the very first track's.
+            self.refresh_css(animate=False)
+        else:
+            self.theme = theme.name
 
     # ---- key handling -----------------------------------------------------
 
