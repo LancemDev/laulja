@@ -34,8 +34,7 @@ class HeaderBar(Static):
         self.app_name = app_name
 
     def refresh_content(self) -> None:
-        self.border_title = self.app_name
-        self.update("")
+        self.update(f"[bold]{self.app_name}[/]")
 
 
 class TracksPanel(ListPanel):

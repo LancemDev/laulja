@@ -35,9 +35,9 @@ Screen {
 }
 
 #header {
-    height: 3;
-    border: round $primary;
-    padding: 0 1;
+    height: 1;
+    content-align: center middle;
+    text-align: center;
 }
 
 #search-input {
@@ -116,7 +116,7 @@ class MusicApp(App[None]):
     Textual's own async event loop instead of a hand-rolled poll/redraw loop."""
 
     CSS = _CSS
-    TITLE = "Laul"
+    TITLE = "Laulja"
 
     def __init__(
         self,
