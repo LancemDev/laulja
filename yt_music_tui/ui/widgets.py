@@ -34,6 +34,8 @@ _BIG_TEXT_FONT = "double_blocky"  # solid block glyphs, only 2 rows tall — a t
 # about twice as tall as a column, so a 4-row font (smblock) rendered letters looking stretched
 # tall; this stays legible and bold without the elongation.
 
+_SHADE_TO_SOLID = str.maketrans("░▒▓", "███")  # see _big_text_rows
+
 
 def _big_text_rows(text: str, width: int) -> list[str]:
     """Renders `text` as big block-letter art, word-wrapped to `width` columns — the closest a
@@ -43,6 +45,11 @@ def _big_text_rows(text: str, width: int) -> list[str]:
         rendered = pyfiglet.Figlet(font=_BIG_TEXT_FONT, width=max(10, width)).renderText(text)
     except Exception:
         return [text]
+
+    # double_blocky anti-aliases curved strokes with the ░ shade character, which under a solid
+    # color reads as a distracting dotted/perforated texture rather than a clean edge. Solidify
+    # it into a full block instead — heavier strokes, but legible rather than textured.
+    rendered = rendered.translate(_SHADE_TO_SOLID)
 
     rows = [row.rstrip() for row in rendered.split("\n")]
     while rows and not rows[0]:
