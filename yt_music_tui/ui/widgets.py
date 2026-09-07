@@ -34,8 +34,7 @@ class HeaderBar(Static):
 
     def refresh_content(self) -> None:
         self.border_title = self.app_name
-        s = self.state
-        self.update(f"[{s.auth_label}]  ·  {s.status_message}")
+        self.update("")
 
 
 class TracksPanel(ListPanel):
