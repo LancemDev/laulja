@@ -14,6 +14,31 @@ from .services.music_service import MusicService
 
 """Mirrors Program.cs: CLI arg handling, then either runs the TUI or a one-shot auth command."""
 
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+async def _with_spinner(message: str, awaitable):
+    """Runs `awaitable` while printing a plain-terminal spinner — for the startup work that
+    happens before the Textual app exists yet (so no widget can show a loading state)."""
+
+    async def spin() -> None:
+        i = 0
+        while True:
+            print(f"\r{_SPINNER_FRAMES[i % len(_SPINNER_FRAMES)]} {message}", end="", flush=True)
+            i += 1
+            await asyncio.sleep(0.1)
+
+    spin_task = asyncio.ensure_future(spin())
+    try:
+        return await awaitable
+    finally:
+        spin_task.cancel()
+        try:
+            await spin_task
+        except asyncio.CancelledError:
+            pass
+        print("\r" + " " * (len(message) + 2) + "\r", end="", flush=True)
+
 
 def main() -> None:
     args = sys.argv[1:]
@@ -40,7 +65,10 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
 
     from .auth import client_factory
 
-    client: YTMusic = await asyncio.to_thread(client_factory.create, session, config.headers_auth_path)
+    client: YTMusic = await _with_spinner(
+        "Connecting to YouTube Music…",
+        asyncio.to_thread(client_factory.create, session, config.headers_auth_path),
+    )
     music = MusicService(client)
     player = AudioPlayerService(music)
     lyrics = LyricsService()

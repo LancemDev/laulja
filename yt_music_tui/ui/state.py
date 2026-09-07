@@ -29,6 +29,7 @@ class AppState:
     full_screen_mode: FullScreenMode = FullScreenMode.NONE
     is_sidebar_collapsed: bool = False
     is_minimal: bool = False
+    is_loading_library: bool = True
 
     tracks_selected_index: int = 0
     playlists_selected_index: int = 0

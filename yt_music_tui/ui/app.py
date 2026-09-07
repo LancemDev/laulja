@@ -197,6 +197,8 @@ class MusicApp(App[None]):
             )
         except Exception as ex:
             s.status_message = f"Couldn't load library: {ex}"
+        finally:
+            s.is_loading_library = False
 
     # ---- player tick ----------------------------------------------------
 
@@ -206,7 +208,11 @@ class MusicApp(App[None]):
         self._player.tick()
         self._sync_player_state()
         after = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
-        if before != after:
+        # Also repaint on nothing-changed ticks whenever something's still loading, so its
+        # spinner actually animates instead of sitting on whatever frame it last happened to
+        # render (position/is_playing/now_playing don't change during a plain data fetch).
+        still_fetching_details = s.now_playing is not None and (s.lyrics is None or s.cover_art is None)
+        if before != after or s.is_loading_library or still_fetching_details:
             self.refresh_all()
 
     def _sync_player_state(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import time
 from datetime import timedelta
 from typing import Optional
 
@@ -17,6 +18,15 @@ from .state import AppState, LeftFocus
 """Panel widgets — the Python/Textual equivalents of UI/Widgets/*.cs. Each widget holds a
 reference to the shared AppState and repaints itself on demand via refresh_content(),
 mirroring the original's Draw(term, area, state) static methods."""
+
+
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def _spinner() -> str:
+    """A Braille-dot spinner frame driven off wall-clock time — no state to thread through
+    AppState, it just animates on its own each time a loading panel gets repainted."""
+    return _SPINNER_FRAMES[int(time.monotonic() * 10) % len(_SPINNER_FRAMES)]
 
 
 def _format_short_duration(d: Optional[timedelta]) -> str:
@@ -57,7 +67,10 @@ class TracksPanel(ListPanel):
 
         tracks = s.displayed_tracks
         if not tracks:
-            self.set_lines("No results." if s.is_showing_search_results else "No tracks yet.", None, 0)
+            if s.is_loading_library and not s.is_showing_search_results:
+                self.set_lines(f"{_spinner()} Loading your library…", None, 0)
+            else:
+                self.set_lines("No results." if s.is_showing_search_results else "No tracks yet.", None, 0)
             return
 
         text = Text()
@@ -85,7 +98,10 @@ class PlaylistsPanel(ListPanel):
         self.border_title = title
 
         if not s.playlists:
-            self.set_lines("No playlists yet.", None, 0)
+            if s.is_loading_library:
+                self.set_lines(f"{_spinner()} Loading your playlists…", None, 0)
+            else:
+                self.set_lines("No playlists yet.", None, 0)
             return
 
         text = Text()
@@ -112,7 +128,8 @@ class LyricsPanel(ListPanel):
 
         if lyrics is None or not lyrics.lines:
             self._rendered_key = None
-            self.set_lines("Loading lyrics…", None, 0)
+            text = f"{_spinner()} Loading lyrics…" if lyrics is None else "No lyrics."
+            self.set_lines(text, None, 0)
             return
 
         if not lyrics.is_synced:
@@ -247,7 +264,7 @@ class CoverArtPanel(Vertical):
                 if track.album:
                     lines.append(track.album)
                 lines.append("")
-                lines.append("Loading cover art…" if track.thumbnail_url else "(no cover art)")
+                lines.append(f"{_spinner()} Loading cover art…" if track.thumbnail_url else "(no cover art)")
             status_widget.remove_class("hidden")
             status_widget.update("\n".join(lines))
             return
