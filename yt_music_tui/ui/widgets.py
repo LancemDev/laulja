@@ -5,6 +5,7 @@ import time
 from datetime import timedelta
 from typing import Optional
 
+import pyfiglet
 from PIL import Image as PILImage, ImageOps
 from rich.text import Text
 from textual.app import ComposeResult
@@ -27,6 +28,26 @@ def _spinner() -> str:
     """A Braille-dot spinner frame driven off wall-clock time — no state to thread through
     AppState, it just animates on its own each time a loading panel gets repainted."""
     return _SPINNER_FRAMES[int(time.monotonic() * 10) % len(_SPINNER_FRAMES)]
+
+
+_BIG_TEXT_FONT = "smblock"  # solid Unicode block glyphs — reads as bold/chunky, not thin ASCII
+
+
+def _big_text_rows(text: str, width: int) -> list[str]:
+    """Renders `text` as big block-letter art, word-wrapped to `width` columns — the closest a
+    terminal can get to the reference video's large caption text, since actual font-size scaling
+    isn't something a terminal can do."""
+    try:
+        rendered = pyfiglet.Figlet(font=_BIG_TEXT_FONT, width=max(10, width)).renderText(text)
+    except Exception:
+        return [text]
+
+    rows = [row.rstrip() for row in rendered.split("\n")]
+    while rows and not rows[0]:
+        rows.pop(0)
+    while rows and not rows[-1]:
+        rows.pop()
+    return rows or [text]
 
 
 def _format_short_duration(d: Optional[timedelta]) -> str:
@@ -143,30 +164,37 @@ class LyricsPanel(ListPanel):
 
         current_index = self._current_line_index(lyrics)
         active = current_index if current_index is not None else 0
+        cols = max(1, int(self.size.width))
         height = max(1, int(self.size.height))
 
         # Only the active line (or panel size) changing should trigger a repaint + scroll —
         # re-triggering the scroll animation every tick with the same target would keep
         # restarting it mid-flight instead of ever settling.
-        key = (id(lyrics), active, height)
+        key = (id(lyrics), active, cols, height)
         if key == self._rendered_key:
             return
         self._rendered_key = key
 
-        # Only the line being sung right now — not the lines around it. Padded with blank rows
-        # top and bottom (half the panel height each) so it still sits at vertical center even
-        # right at the start or end of the song, and animated so it settles into place each time
-        # rather than hard-cutting, but nothing else is shown at the same time.
-        pad = height // 2
+        # Only the line being sung right now — not the lines around it — but rendered as big
+        # block-letter text (word-wrapped to the panel width) instead of plain bold color, since
+        # a terminal can't scale font size the way the reference video's caption does.
+        line_text = (lyrics.lines[active].text or " ").upper()
+        block_rows = _big_text_rows(line_text, cols)
+        pad = max(0, (height - len(block_rows)) // 2)
+
         text = Text(justify="center")
         if pad:
             text.append("\n" * pad)
-        line_text = (lyrics.lines[active].text or " ").upper()
-        text.append(line_text, style="bold cyan1")
+        for i, row in enumerate(block_rows):
+            if i:
+                text.append("\n")
+            text.append(row, style="bold cyan1")
         if pad:
             text.append("\n" * pad)
 
-        self.set_lines(text, pad, pad * 2 + 1, center=True, animate=True)
+        center_index = pad + len(block_rows) // 2
+        total_rows = pad + len(block_rows) + pad
+        self.set_lines(text, center_index, total_rows, center=True, animate=True)
 
     def _current_line_index(self, lyrics) -> Optional[int]:
         position = timedelta(seconds=self.state.position_seconds)
