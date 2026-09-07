@@ -16,6 +16,18 @@ class ListPanel(VerticalScroll):
     ListPanel {
         border: round $primary;
         padding: 0 1;
+
+        /* Textual's default scrollbar is 2 cells wide, grey, and unthemed — it reads as a
+           generic OS widget bolted onto a rounded, theme-colored panel. Slim it to 1 cell and
+           tint it with the app's own colors (which now shift with the album art) so it reads
+           as part of the panel instead of competing with it. */
+        scrollbar-size-vertical: 1;
+        scrollbar-color: $primary;
+        scrollbar-color-hover: $accent;
+        scrollbar-color-active: $accent;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
     }
     """
 
