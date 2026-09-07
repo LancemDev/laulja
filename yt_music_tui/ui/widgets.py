@@ -124,28 +124,53 @@ class LyricsPanel(ListPanel):
 
         current_index = self._current_line_index(lyrics)
         active = current_index if current_index is not None else 0
+        height = max(1, int(self.size.height))
 
-        # Only the active line changing should trigger a repaint + scroll — re-triggering the
-        # scroll animation every tick with the same target would keep restarting it mid-flight.
-        key = (id(lyrics), active)
+        # Only the active line (or panel size) changing should trigger a repaint + scroll —
+        # re-triggering the scroll animation every tick with the same target would keep
+        # restarting it mid-flight instead of ever settling.
+        key = (id(lyrics), active, height)
         if key == self._rendered_key:
             return
         self._rendered_key = key
 
-        text = Text()
+        # Pad top and bottom with blank rows so the active line can sit at vertical center even
+        # right at the start or end of the song, instead of getting pinned to the panel's edge
+        # once scrolling has nowhere further to go.
+        pad = height // 2
+        text = Text(justify="center")
+        active_row = 0
+        row = 0
+
+        def blank_rows(n: int) -> None:
+            nonlocal row
+            for _ in range(n):
+                if row:
+                    text.append("\n")
+                row += 1
+
+        blank_rows(pad)
         for i, line in enumerate(lyrics.lines):
-            if i:
+            if row:
                 text.append("\n")
+            row += 1
+            if i == active:
+                active_row = row - 1
+
             distance = abs(i - active)
             if i == active:
-                style = "bold"
+                style = "bold cyan1"
             elif distance == 1:
                 style = "grey70"
             else:
                 style = "grey50" if distance == 2 else "grey35"
             text.append(line.text or " ", style=style)
 
-        self.set_lines(text, active, len(lyrics.lines), center=True, animate=True)
+            if i != len(lyrics.lines) - 1:
+                blank_rows(1)  # breathing room between lines
+        blank_rows(pad)
+
+        self.set_lines(text, active_row, row, center=True, animate=True)
 
     def _current_line_index(self, lyrics) -> Optional[int]:
         position = timedelta(seconds=self.state.position_seconds)
