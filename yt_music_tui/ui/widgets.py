@@ -53,7 +53,7 @@ class TracksPanel(ListPanel):
         )
         if s.left_focus == LeftFocus.TRACKS:
             title = f"▶ {title}"
-        self.set_title(title)
+        self.border_title = title
 
         tracks = s.displayed_tracks
         if not tracks:
@@ -82,7 +82,7 @@ class PlaylistsPanel(ListPanel):
         title = "Playlists"
         if s.left_focus == LeftFocus.PLAYLISTS:
             title = f"▶ {title}"
-        self.set_title(title)
+        self.border_title = title
 
         if not s.playlists:
             self.set_lines("No playlists yet.", None, 0)
@@ -106,7 +106,7 @@ class LyricsPanel(ListPanel):
         self._rendered_key: Optional[tuple] = None
 
     def refresh_content(self) -> None:
-        self.set_title("Lyrics")
+        self.border_title = "Lyrics"
         s = self.state
         lyrics = s.lyrics
 
@@ -126,7 +126,7 @@ class LyricsPanel(ListPanel):
 
         current_index = self._current_line_index(lyrics)
         active = current_index if current_index is not None else 0
-        height = max(1, int(self._scroll.size.height))
+        height = max(1, int(self.size.height))
 
         # Only the active line (or panel size) changing should trigger a repaint + scroll —
         # re-triggering the scroll animation every tick with the same target would keep

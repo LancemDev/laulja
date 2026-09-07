@@ -3,43 +3,28 @@ from __future__ import annotations
 from typing import Optional
 
 from rich.console import RenderableType
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 
-class ListPanel(Vertical):
-    """A scrollable panel that renders a list of lines with one row highlighted — the
-    Python/Textual stand-in for Ratatui's `List` widget (used by TracksPanel, PlaylistsPanel,
-    and LyricsPanel in the original). A left accent bar marks the panel instead of a full box;
-    since that leaves no border row to embed a title into, the title is a plain header line
-    above a nested scrollable body instead of `border_title`."""
+class ListPanel(VerticalScroll):
+    """A bordered, scrollable panel that renders a list of lines with one row highlighted —
+    the Python/Textual stand-in for Ratatui's `List` widget (used by TracksPanel,
+    PlaylistsPanel, and LyricsPanel in the original)."""
 
     DEFAULT_CSS = """
     ListPanel {
-        border-left: wide $primary;
+        border: round $primary;
         padding: 0 1;
-    }
-    ListPanel > #list-header {
-        height: 1;
-        text-style: bold;
-    }
-    ListPanel > #list-scroll {
-        height: 1fr;
     }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._header = Static(id="list-header")
         self._body = Static()
-        self._scroll = VerticalScroll(self._body, id="list-scroll")
 
     def compose(self):
-        yield self._header
-        yield self._scroll
-
-    def set_title(self, title: RenderableType) -> None:
-        self._header.update(title)
+        yield self._body
 
     def set_lines(
         self,
@@ -59,16 +44,16 @@ class ListPanel(Vertical):
             self.call_after_refresh(self._reveal, selected_index)
 
     def _reveal(self, index: int) -> None:
-        height = max(1, int(self._scroll.size.height))
-        top = int(self._scroll.scroll_y)
+        height = max(1, int(self.size.height))
+        top = int(self.scroll_y)
         if index < top:
-            self._scroll.scroll_to(y=index, animate=False)
+            self.scroll_to(y=index, animate=False)
         elif index >= top + height:
-            self._scroll.scroll_to(y=index - height + 1, animate=False)
+            self.scroll_to(y=index - height + 1, animate=False)
 
     def _reveal_centered(self, index: int, animate: bool) -> None:
         # Keeps the active line anchored near the middle of the panel, so each advance drifts
         # the whole list up by one row — a continuous scroll rather than a hard cut.
-        height = max(1, int(self._scroll.size.height))
+        height = max(1, int(self.size.height))
         target = max(0, index - height // 2)
-        self._scroll.scroll_to(y=target, animate=animate, duration=0.35, easing="out_cubic")
+        self.scroll_to(y=target, animate=animate, duration=0.35, easing="out_cubic")
