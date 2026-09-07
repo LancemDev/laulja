@@ -219,7 +219,6 @@ class CoverArtPanel(Vertical):
         yield Static(id="cover-status")
 
     def refresh_content(self) -> None:
-        self.border_title = "Now Playing"
         track = self.state.now_playing
         art = self.state.cover_art
         image_widget = self.query_one("#cover-image", CoverImage)

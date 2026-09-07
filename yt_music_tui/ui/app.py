@@ -74,7 +74,6 @@ Screen {
 
 #cover {
     height: 65%;
-    border: round $primary;
 }
 #bar {
     height: 35%;
