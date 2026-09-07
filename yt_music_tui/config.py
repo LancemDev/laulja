@@ -10,7 +10,7 @@ def _env_flag_disabled(name: str) -> bool:
 
 @dataclass(frozen=True)
 class AppConfig:
-    app_name: str = "YT Music TUI (Python)"
+    app_name: str = "Laul"
     tick_ms: int = 50
     geographical_location: str = "US"
     cookies_path: str | None = None

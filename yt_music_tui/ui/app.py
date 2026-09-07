@@ -116,7 +116,7 @@ class MusicApp(App[None]):
     Textual's own async event loop instead of a hand-rolled poll/redraw loop."""
 
     CSS = _CSS
-    TITLE = "YT Music TUI"
+    TITLE = "Laul"
 
     def __init__(
         self,
@@ -489,7 +489,6 @@ class MusicApp(App[None]):
         pos = _format_seconds(s.position_seconds)
         dur = _format_seconds(s.duration_seconds)
         info = self.query_one("#player-info", Static)
-        info.border_title = "Now Playing"
         info.update(f"{line}  [{pos} / {dur}]")
         self.query_one("#player-gauge", ProgressBar).update(progress=s.progress_ratio * 1000)
 
