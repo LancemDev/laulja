@@ -311,9 +311,25 @@ class BarVisualizerPanel(Static):
         self.update("\n".join(rows))
 
 
+_KEY_ACTIONS = [
+    ("Tab", "focus"),
+    ("j/k", "move"),
+    ("Enter", "play"),
+    ("Space", "pause"),
+    ("n/p", "next/prev"),
+    ("/", "search"),
+    ("f", "fullscreen"),
+    ("c", "collapse"),
+    ("m", "minimal"),
+    ("q", "quit"),
+]
+
+
 class QuickActionsBar(Static):
     def refresh_content(self) -> None:
-        self.update(
-            "Tab focus  |  j/k move  |  Enter play  |  Space pause  |  n/p next/prev  |  "
-            "/ search  |  f fullscreen  |  c collapse  |  m minimal  |  q quit"
-        )
+        # Keys get a boxed "keycap" look so they read as literal keys to press, distinct from
+        # the plain-text action next to them — a flat "Tab focus" run-on reads ambiguous to
+        # someone who doesn't already know the bindings.
+        divider = "   "
+        pairs = (f"[b reverse] {key} [/]  {action}" for key, action in _KEY_ACTIONS)
+        self.update(divider.join(pairs))
