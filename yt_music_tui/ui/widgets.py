@@ -101,6 +101,7 @@ class LyricsPanel(ListPanel):
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self._rendered_key: Optional[tuple] = None
 
     def refresh_content(self) -> None:
         self.border_title = "Lyrics"
@@ -108,18 +109,43 @@ class LyricsPanel(ListPanel):
         lyrics = s.lyrics
 
         if lyrics is None or not lyrics.lines:
+            self._rendered_key = None
             self.set_lines("Loading lyrics…", None, 0)
             return
 
         if not lyrics.is_synced:
-            # No per-line timing to step through — show the plain lyrics block as-is.
-            text = Text("\n".join(line.text for line in lyrics.lines))
-            self.set_lines(text, None, len(lyrics.lines))
+            key = (id(lyrics), None)
+            if key != self._rendered_key:
+                # No per-line timing to step through — show the plain lyrics block as-is.
+                text = Text("\n".join(line.text for line in lyrics.lines))
+                self.set_lines(text, None, len(lyrics.lines))
+                self._rendered_key = key
             return
 
         current_index = self._current_line_index(lyrics)
-        index = current_index if current_index is not None else 0
-        self.set_lines(Text(f"▶ {lyrics.lines[index].text}"), None, 1)
+        active = current_index if current_index is not None else 0
+
+        # Only the active line changing should trigger a repaint + scroll — re-triggering the
+        # scroll animation every tick with the same target would keep restarting it mid-flight.
+        key = (id(lyrics), active)
+        if key == self._rendered_key:
+            return
+        self._rendered_key = key
+
+        text = Text()
+        for i, line in enumerate(lyrics.lines):
+            if i:
+                text.append("\n")
+            distance = abs(i - active)
+            if i == active:
+                style = "bold"
+            elif distance == 1:
+                style = "grey70"
+            else:
+                style = "grey50" if distance == 2 else "grey35"
+            text.append(line.text or " ", style=style)
+
+        self.set_lines(text, active, len(lyrics.lines), center=True, animate=True)
 
     def _current_line_index(self, lyrics) -> Optional[int]:
         position = timedelta(seconds=self.state.position_seconds)
