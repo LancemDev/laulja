@@ -149,6 +149,14 @@ class AudioPlayerService:
                 assert ffmpeg.stdout is not None
                 chunk = await ffmpeg.stdout.read(16384)
                 if not chunk:
+                    # ffmpeg has decoded the whole track, but the sink (pw-play/paplay/aplay)
+                    # can still be holding several hundred ms of already-written audio in its
+                    # own internal buffer that hasn't reached the speakers yet. Closing its
+                    # stdin and waiting for it to exit lets it actually finish playing that
+                    # buffer; without this, _track_ended flips immediately, next_track() tears
+                    # the pipeline down, and _stop_pipeline()'s sink.kill() silences that tail
+                    # before it's heard — the track visibly (audibly) cuts short of the end.
+                    await self._drain_sink(sink)
                     self._track_ended = True
                     return
 
@@ -159,6 +167,18 @@ class AudioPlayerService:
             pass  # expected on stop/skip — the pipeline is being torn down deliberately
         except Exception:
             self._track_ended = True
+
+    @staticmethod
+    async def _drain_sink(sink) -> None:
+        try:
+            sink.stdin.close()
+        except Exception:
+            pass
+        loop = asyncio.get_running_loop()
+        try:
+            await asyncio.wait_for(loop.run_in_executor(None, sink.wait), timeout=5.0)
+        except Exception:
+            pass  # timed out or already gone — proceed rather than hang track advancement
 
     @staticmethod
     def _write_to_sink(sink, chunk: bytes) -> None:
