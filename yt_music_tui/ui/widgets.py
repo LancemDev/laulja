@@ -31,15 +31,16 @@ def _spinner() -> str:
     return _SPINNER_FRAMES[int(time.monotonic() * 10) % len(_SPINNER_FRAMES)]
 
 
-# Biggest/blockiest first, each a fallback for the one before. "ansi_regular" is solid
-# full-block glyphs (█) — not the +-| box-drawing of "digital" (illegible/ugly) or the
-# half-block fonts (smblock, double_blocky), which render as a checkerboard of gaps on
-# terminals that don't tile those glyphs pixel-perfectly — but its letters are ~8 columns
-# wide, too wide for every word of a line to fit in a narrow lyrics panel. pyfiglet still
-# wraps a too-wide *line* at word boundaries, but a too-wide single *word* gets torn across
-# rows mid-letter, which is unreadable. "small" is a much narrower, plain figlet font used
-# only when the panel is too narrow for the big one.
-_BIG_TEXT_FONTS = ["ansi_regular", "small"]
+# Biggest/blockiest first, each a fallback for the one before. Both are plain-ASCII figlet
+# fonts (only space/_/|/\//.` etc.) on purpose — not the +-| per-letter boxes of "digital"
+# (illegible/ugly) and not any Unicode block-drawing font (solid "█" full blocks included):
+# those depend on the terminal's font tiling that glyph pixel-perfectly, and on terminals
+# that don't, they render as a broken checkerboard/outline instead of a solid letter. Plain
+# ASCII always renders identically everywhere. "big"'s letters are still ~7 columns wide,
+# too wide for every word of a line to fit in a narrow lyrics panel — pyfiglet wraps a
+# too-wide *line* at word boundaries fine, but tears a too-wide single *word* across rows
+# mid-letter instead, which is unreadable — so "small" (narrower) is the fallback for that.
+_BIG_TEXT_FONTS = ["big", "small"]
 
 
 def _figlet_word_width(word: str, font: str) -> int:
