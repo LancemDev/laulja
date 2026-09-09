@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import textwrap
 import time
 from datetime import timedelta
 from typing import Optional
@@ -30,27 +31,55 @@ def _spinner() -> str:
     return _SPINNER_FRAMES[int(time.monotonic() * 10) % len(_SPINNER_FRAMES)]
 
 
-_BIG_TEXT_FONT = "digital"  # each letter boxed in plain ASCII (+-|), not abstract block-drawing
-# art — the block-character fonts (smblock, double_blocky) render as a checkerboard of gaps on
-# terminals that don't tile those glyphs pixel-perfectly, and are illegible when that happens.
-# Plain ASCII always renders correctly, and showing the literal letter can't be misread.
+# Biggest/blockiest first, each a fallback for the one before. "ansi_regular" is solid
+# full-block glyphs (█) — not the +-| box-drawing of "digital" (illegible/ugly) or the
+# half-block fonts (smblock, double_blocky), which render as a checkerboard of gaps on
+# terminals that don't tile those glyphs pixel-perfectly — but its letters are ~8 columns
+# wide, too wide for every word of a line to fit in a narrow lyrics panel. pyfiglet still
+# wraps a too-wide *line* at word boundaries, but a too-wide single *word* gets torn across
+# rows mid-letter, which is unreadable. "small" is a much narrower, plain figlet font used
+# only when the panel is too narrow for the big one.
+_BIG_TEXT_FONTS = ["ansi_regular", "small"]
+
+
+def _figlet_word_width(word: str, font: str) -> int:
+    """How many columns `word` alone renders to in `font` — used to check a word will fit on
+    one row before committing to a font, since pyfiglet itself will silently tear a too-wide
+    word across rows mid-letter rather than refuse to render it."""
+    try:
+        rendered = pyfiglet.Figlet(font=font, width=10_000).renderText(word)
+    except Exception:
+        return len(word)
+    return max((len(row.rstrip()) for row in rendered.split("\n")), default=len(word))
 
 
 def _big_text_rows(text: str, width: int) -> list[str]:
     """Renders `text` as big boxed-letter art, word-wrapped to `width` columns — the closest a
     terminal can get to the reference video's large caption text, since actual font-size scaling
-    isn't something a terminal can do."""
-    try:
-        rendered = pyfiglet.Figlet(font=_BIG_TEXT_FONT, width=max(10, width)).renderText(text)
-    except Exception:
-        return [text]
+    isn't something a terminal can do. Falls back to a narrower font, and finally to plain text,
+    rather than let a big font's letters be wider than the panel and force pyfiglet to split a
+    word mid-letter to make it "fit"."""
+    width = max(10, width)
+    words = text.split()
 
-    rows = [row.rstrip() for row in rendered.split("\n")]
-    while rows and not rows[0]:
-        rows.pop(0)
-    while rows and not rows[-1]:
-        rows.pop()
-    return rows or [text]
+    for font in _BIG_TEXT_FONTS:
+        if words and max(_figlet_word_width(w, font) for w in words) > width:
+            continue
+        try:
+            rendered = pyfiglet.Figlet(font=font, width=width).renderText(text)
+        except Exception:
+            continue
+        rows = [row.rstrip() for row in rendered.split("\n")]
+        while rows and not rows[0]:
+            rows.pop(0)
+        while rows and not rows[-1]:
+            rows.pop()
+        if rows:
+            return rows
+
+    # Not even the narrowest big font's letters fit every word in this line — give up on
+    # block-letter art for it and just wrap plain text, which stays legible at any width.
+    return textwrap.wrap(text, width) or [text]
 
 
 def _format_short_duration(d: Optional[timedelta]) -> str:
