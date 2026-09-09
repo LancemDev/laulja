@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import textwrap
 import time
 from datetime import timedelta
@@ -12,7 +13,16 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
-from textual_image.widget import Image as CoverImage
+from textual_image.widget import Image as _AutoCoverImage
+from textual_image.widget import SixelImage as _SixelCoverImage
+
+# textual-image auto-detects Sixel/Kitty-graphics-protocol support by writing an escape-code
+# query and giving the terminal 100ms to answer (its own docstring calls this "a bit flaky —
+# keystrokes during reading the response can lead to false answers"). Konsole in particular
+# has supported Sixel since v22.04, but its response to that query can still just not land in
+# time, silently downgrading it to blurry half-block-character rendering. Since Konsole sets
+# $KONSOLE_VERSION, we can skip the flaky round-trip for it entirely and force real Sixel.
+CoverImage = _SixelCoverImage if os.environ.get("KONSOLE_VERSION") else _AutoCoverImage
 
 from .listing import ListPanel
 from .state import AppState, LeftFocus
