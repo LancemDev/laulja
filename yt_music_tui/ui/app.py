@@ -25,6 +25,7 @@ from .widgets import (
     LyricsPanel,
     PlaylistsPanel,
     QuickActionsBar,
+    TrackProgressPanel,
     TracksPanel,
 )
 
@@ -75,10 +76,13 @@ Screen {
 }
 
 #cover {
-    height: 65%;
+    height: 65fr;
 }
 #bar {
-    height: 35%;
+    height: 35fr;
+}
+#tracker {
+    height: 1;
 }
 
 #lyrics {
@@ -161,6 +165,7 @@ class MusicApp(App[None]):
             with Vertical(id="center"):
                 yield CoverArtPanel(self.state, id="cover")
                 yield BarVisualizerPanel(self.state, id="bar")
+                yield TrackProgressPanel(self.state, id="tracker")
             yield LyricsPanel(self.state, id="lyrics")
         with Vertical(id="player"):
             yield Static(id="player-info")
@@ -552,6 +557,7 @@ class MusicApp(App[None]):
         self.query_one(PlaylistsPanel).refresh_content()
         self.query_one(CoverArtPanel).refresh_content()
         self.query_one(BarVisualizerPanel).refresh_content()
+        self.query_one(TrackProgressPanel).refresh_content()
         self.query_one(LyricsPanel).refresh_content()
         self.query_one(QuickActionsBar).refresh_content()
         self._refresh_player_bar()

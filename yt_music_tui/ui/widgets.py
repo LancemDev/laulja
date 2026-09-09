@@ -399,6 +399,32 @@ class BarVisualizerPanel(Static):
         self.update("\n".join(rows))
 
 
+class TrackProgressPanel(Static):
+    """A slim single-line scrubber directly under the bar visualizer: a plain track with a
+    marker sliding along it to show how far into the song playback is — distinct from the
+    solid-gauge ProgressBar + numeric time readout already in the bottom player bar, which
+    sits far enough away from the visualizer to not read as "the same control" at a glance."""
+
+    DEFAULT_CSS = """
+    TrackProgressPanel {
+        height: 1;
+        content-align: center middle;
+        color: $primary;
+    }
+    """
+
+    def __init__(self, state: AppState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+
+    def refresh_content(self) -> None:
+        width = max(1, int(self.size.width))
+        marker = int(self.state.progress_ratio * (width - 1)) if width > 1 else 0
+        track = ["─"] * width
+        track[marker] = "●"
+        self.update("".join(track))
+
+
 _KEY_ACTIONS = [
     ("Tab", "focus"),
     ("j/k", "move"),
