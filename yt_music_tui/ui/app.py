@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
+from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -25,7 +26,6 @@ from .widgets import (
     LyricsPanel,
     PlaylistsPanel,
     QuickActionsBar,
-    TrackProgressPanel,
     TracksPanel,
 )
 
@@ -76,13 +76,10 @@ Screen {
 }
 
 #cover {
-    height: 65fr;
+    height: 65%;
 }
 #bar {
-    height: 35fr;
-}
-#tracker {
-    height: 1;
+    height: 35%;
 }
 
 #lyrics {
@@ -165,11 +162,10 @@ class MusicApp(App[None]):
             with Vertical(id="center"):
                 yield CoverArtPanel(self.state, id="cover")
                 yield BarVisualizerPanel(self.state, id="bar")
-                yield TrackProgressPanel(self.state, id="tracker")
             yield LyricsPanel(self.state, id="lyrics")
         with Vertical(id="player"):
             yield Static(id="player-info")
-            yield ProgressBar(id="player-gauge", total=1000, show_eta=False)
+            yield ProgressBar(id="player-gauge", total=1000, show_eta=False, show_percentage=False)
         yield QuickActionsBar(id="quickactions")
 
     async def on_mount(self) -> None:
@@ -557,7 +553,6 @@ class MusicApp(App[None]):
         self.query_one(PlaylistsPanel).refresh_content()
         self.query_one(CoverArtPanel).refresh_content()
         self.query_one(BarVisualizerPanel).refresh_content()
-        self.query_one(TrackProgressPanel).refresh_content()
         self.query_one(LyricsPanel).refresh_content()
         self.query_one(QuickActionsBar).refresh_content()
         self._refresh_player_bar()
@@ -572,8 +567,22 @@ class MusicApp(App[None]):
             line = "Nothing playing  ·  Enter play · Space pause · n/p skip"
         pos = _format_seconds(s.position_seconds)
         dur = _format_seconds(s.duration_seconds)
+        text = f"{line}  [{pos} / {dur}]"
+
+        # The "now playing" bar doubles as the progress indicator: reverse-video sweeps across
+        # it left-to-right as the song plays, so it reads as filling in — empty at 0:00, fully
+        # filled right as the track ends — rather than a separate scrubber next to it.
         info = self.query_one("#player-info", Static)
-        info.update(f"{line}  [{pos} / {dur}]")
+        width = max(len(text), int(info.content_size.width))
+        padded = text.ljust(width)
+        filled = int(s.progress_ratio * width)
+
+        display = Text()
+        if filled:
+            display.append(padded[:filled], style="reverse")
+        display.append(padded[filled:])
+        info.update(display)
+
         self.query_one("#player-gauge", ProgressBar).update(progress=s.progress_ratio * 1000)
 
 
