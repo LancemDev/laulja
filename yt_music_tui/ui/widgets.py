@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Optional
 
 import pyfiglet
-from PIL import Image as PILImage, ImageOps
+from PIL import Image as PILImage
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -240,6 +240,20 @@ class LyricsPanel(ListPanel):
         return index
 
 
+def _cover_crop_box(source_size: tuple[int, int], target_ratio: float) -> tuple[int, int, int, int]:
+    """The centered crop box on `source_size` (width, height) matching `target_ratio`
+    (width/height) — the crop half of CSS `object-fit: cover`, deliberately without the resize
+    half, so the result stays at the source's own resolution."""
+    src_w, src_h = source_size
+    src_ratio = src_w / src_h
+    if src_ratio > target_ratio:
+        new_w, new_h = max(1, round(src_h * target_ratio)), src_h
+    else:
+        new_w, new_h = src_w, max(1, round(src_w / target_ratio))
+    left, top = (src_w - new_w) // 2, (src_h - new_h) // 2
+    return (left, top, left + new_w, top + new_h)
+
+
 class CoverArtPanel(Vertical):
     """Shows the track's real thumbnail via textual-image, which picks the best rendering the
     terminal actually supports (Kitty/Sixel graphics for a true bitmap, falling back to colored
@@ -321,10 +335,16 @@ class CoverArtPanel(Vertical):
         # Crop to the panel's shape (like CSS `object-fit: cover`) so it fills completely at
         # full size, undistorted — using the fixed cell-aspect assumption above, not a live
         # terminal query, for the target ratio.
+        #
+        # Crop only — do NOT also resize down to (cols, rows). Those are terminal *cells*, not
+        # pixels (a cell is many pixels), and textual-image's renderers (sixel.py/tgp.py) already
+        # scale the image we hand them to the terminal's real pixel dimensions themselves, via
+        # get_cell_size(). Pre-shrinking to a cell-count-sized bitmap here fed a tiny image into
+        # that scaling step, which then stretched it back up — exactly what produced the blur.
         key = (*source_key, cols, rows)
         if key != self._shown_key:
-            target = (cols, max(1, round(rows / self._CELL_ASPECT)))
-            fitted = ImageOps.fit(self._source_image, target, method=PILImage.Resampling.LANCZOS)
+            target_ratio = cols / max(1, round(rows / self._CELL_ASPECT))
+            fitted = self._source_image.crop(_cover_crop_box(self._source_image.size, target_ratio))
 
             image_widget.image = fitted
             image_widget.remove_class("hidden")
