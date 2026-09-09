@@ -38,6 +38,12 @@ class AudioPlayerService:
         self._samples_written = 0
         self._is_playing = False
         self._track_ended = False
+        # Callers (the UI's key handler, and tick()'s own auto-advance) no longer await a
+        # play/skip through to completion before doing anything else, so a rapid pair of skips
+        # could otherwise start two _start_current() calls concurrently and corrupt playback
+        # state (each racing to set self.current/self._index/self._ffmpeg). This serializes them
+        # instead: a second call just waits for the first to finish before it starts its own.
+        self._action_lock = asyncio.Lock()
 
         self.current: Optional[Track] = None
         self.duration_seconds: float = 0.0
@@ -60,21 +66,23 @@ class AudioPlayerService:
         return self._analyzer.bars
 
     async def play(self, track: Track) -> None:
-        self._queue = [track]
-        self._index = 0
-        await self._start_current()
+        async with self._action_lock:
+            self._queue = [track]
+            self._index = 0
+            await self._start_current()
 
     async def play_queue(self, tracks: List[Track], start_index: int = 0) -> None:
-        self._queue = list(tracks)
-        self._index = max(0, min(start_index, len(self._queue) - 1)) if self._queue else -1
+        async with self._action_lock:
+            self._queue = list(tracks)
+            self._index = max(0, min(start_index, len(self._queue) - 1)) if self._queue else -1
 
-        if not self._queue:
-            await self._stop_pipeline()
-            self.current = None
-            self.duration_seconds = 0.0
-            return
+            if not self._queue:
+                await self._stop_pipeline()
+                self.current = None
+                self.duration_seconds = 0.0
+                return
 
-        await self._start_current()
+            await self._start_current()
 
     async def toggle_pause(self) -> None:
         if self.current is None:
@@ -82,16 +90,18 @@ class AudioPlayerService:
         self._is_playing = not self._is_playing
 
     async def next_track(self) -> None:
-        if not self._queue:
-            return
-        self._index = (self._index + 1) % len(self._queue)
-        await self._start_current()
+        async with self._action_lock:
+            if not self._queue:
+                return
+            self._index = (self._index + 1) % len(self._queue)
+            await self._start_current()
 
     async def previous_track(self) -> None:
-        if not self._queue:
-            return
-        self._index = (self._index - 1) % len(self._queue)
-        await self._start_current()
+        async with self._action_lock:
+            if not self._queue:
+                return
+            self._index = (self._index - 1) % len(self._queue)
+            await self._start_current()
 
     def tick(self) -> None:
         if not self._track_ended:

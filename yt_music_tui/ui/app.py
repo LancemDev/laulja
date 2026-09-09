@@ -385,27 +385,19 @@ class MusicApp(App[None]):
             return
 
         if event.key == "n":
-            await self._player.next_track()
-            self._sync_player_state()
-            s.status_message = self._player.last_error or "Next track"
-            self.refresh_all()
+            self._launch(self._next_track(), loading="Loading next track…")
             return
 
         if event.key == "p":
-            await self._player.previous_track()
-            self._sync_player_state()
-            s.status_message = self._player.last_error or "Previous track"
-            self.refresh_all()
+            self._launch(self._previous_track(), loading="Loading previous track…")
             return
 
         if event.key == "enter":
-            await self._play_selection()
-            self.refresh_all()
+            self._launch(self._play_selection(), loading="Loading…")
             return
 
         if event.key == "l":
-            await self._toggle_like()
-            self.refresh_all()
+            self._launch(self._toggle_like(), loading="Updating rating…")
             return
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -463,6 +455,24 @@ class MusicApp(App[None]):
                 return
             s.playlists_selected_index = max(0, min(s.playlists_selected_index + delta, count - 1))
 
+    def _launch(self, coro, *, loading: str) -> None:
+        """Runs `coro` in the background and repaints once it's done, instead of awaiting it
+        directly in on_key. Resolving a stream URL + starting ffmpeg (play/next/previous) can
+        take a couple of seconds; on_key is awaited to completion by Textual's own key dispatch
+        before it'll process the *next* key event, so awaiting that chain in-place froze the
+        whole UI — cursor movement included — until it finished. `loading` is shown immediately
+        so pressing the key still gives instant feedback despite the real work happening after
+        on_key has already returned."""
+        s = self.state
+        s.status_message = loading
+        self.refresh_all()
+
+        async def run() -> None:
+            await coro
+            self.refresh_all()
+
+        asyncio.ensure_future(run())
+
     async def _play_selection(self) -> None:
         s = self.state
         if s.left_focus == LeftFocus.PLAYLISTS:
@@ -494,6 +504,16 @@ class MusicApp(App[None]):
         s.status_message = self._player.last_error or (
             f"Playing {s.now_playing.title}" if s.now_playing else "Playing"
         )
+
+    async def _next_track(self) -> None:
+        await self._player.next_track()
+        self._sync_player_state()
+        self.state.status_message = self._player.last_error or "Next track"
+
+    async def _previous_track(self) -> None:
+        await self._player.previous_track()
+        self._sync_player_state()
+        self.state.status_message = self._player.last_error or "Previous track"
 
     async def _toggle_like(self) -> None:
         s = self.state
