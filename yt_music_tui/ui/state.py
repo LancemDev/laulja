@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from ..models import Lyrics, Playlist, Track
 
@@ -46,6 +46,11 @@ class AppState:
     visualizer_levels: List[int] = field(default_factory=list)
     lyrics: Optional[Lyrics] = None
     cover_art: Optional[bytes] = None
+
+    # Seeded from get_liked_songs() at startup, then updated optimistically on 'l' rather than
+    # re-fetched from the API each time — ytmusicapi has no per-track "is this liked" lookup,
+    # only the bulk get_liked_songs() list.
+    liked_track_ids: Set[str] = field(default_factory=set)
 
     auth_label: str = "not signed in"
     is_authenticated: bool = False

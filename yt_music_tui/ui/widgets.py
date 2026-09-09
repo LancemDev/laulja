@@ -405,6 +405,7 @@ _KEY_ACTIONS = [
     ("Enter", "play"),
     ("Space", "pause"),
     ("n/p", "next/prev"),
+    ("l", "like"),
     ("/", "search"),
     ("f", "fullscreen"),
     ("c", "collapse"),

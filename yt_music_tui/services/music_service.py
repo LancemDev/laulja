@@ -79,6 +79,14 @@ class MusicService:
         playlist = await asyncio.to_thread(self._client.get_playlist, playlist_id, None)
         return [t for t in (_to_track(item) for item in playlist.get("tracks", [])) if t is not None]
 
+    async def get_liked_song_ids(self) -> set[str]:
+        liked = await asyncio.to_thread(self._client.get_liked_songs, 200)
+        return {item["videoId"] for item in liked.get("tracks", []) if item.get("videoId")}
+
+    async def rate_song(self, track_id: str, liked: bool) -> None:
+        rating = "LIKE" if liked else "INDIFFERENT"
+        await asyncio.to_thread(self._client.rate_song, track_id, rating)
+
     async def get_stream_url(self, track_id: str) -> str:
         return await asyncio.to_thread(_resolve_stream_url, track_id)
 

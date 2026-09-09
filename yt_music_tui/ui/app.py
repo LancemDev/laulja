@@ -187,18 +187,34 @@ class MusicApp(App[None]):
 
     async def _load_initial_data(self) -> None:
         s = self.state
-        try:
-            s.library_tracks = await self._music.get_library_tracks()
-            s.playlists = await self._music.get_library_playlists()
+        # Two independent network round-trips — fetched concurrently rather than one after
+        # another, since each one waiting on the last was most of what made startup slow.
+        # return_exceptions=True so one failing doesn't take the other down with it.
+        tracks, playlists = await asyncio.gather(
+            self._music.get_library_tracks(),
+            self._music.get_library_playlists(),
+            return_exceptions=True,
+        )
+
+        if isinstance(tracks, BaseException):
+            s.status_message = f"Couldn't load library: {tracks}"
+        else:
+            s.library_tracks = tracks
+
+        if isinstance(playlists, BaseException):
+            if not isinstance(tracks, BaseException):
+                s.status_message = f"Couldn't load playlists: {playlists}"
+        else:
+            s.playlists = playlists
+
+        if not isinstance(tracks, BaseException) and not isinstance(playlists, BaseException):
             s.status_message = (
                 f"Auth OK · {self._auth.status_detail}"
                 if self._auth.is_authenticated
                 else f"Auth: {self._auth.status_label} · {self._auth.status_detail}"
             )
-        except Exception as ex:
-            s.status_message = f"Couldn't load library: {ex}"
-        finally:
-            s.is_loading_library = False
+
+        s.is_loading_library = False
 
     # ---- player tick ----------------------------------------------------
 
