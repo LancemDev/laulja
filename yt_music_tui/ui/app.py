@@ -187,12 +187,14 @@ class MusicApp(App[None]):
 
     async def _load_initial_data(self) -> None:
         s = self.state
-        # Two independent network round-trips — fetched concurrently rather than one after
+        # Three independent network round-trips — fetched concurrently rather than one after
         # another, since each one waiting on the last was most of what made startup slow.
-        # return_exceptions=True so one failing doesn't take the other down with it.
-        tracks, playlists = await asyncio.gather(
+        # return_exceptions=True so one failing (e.g. liked songs, which is a nice-to-have)
+        # doesn't take the others down with it.
+        tracks, playlists, liked_ids = await asyncio.gather(
             self._music.get_library_tracks(),
             self._music.get_library_playlists(),
+            self._music.get_liked_song_ids(),
             return_exceptions=True,
         )
 
@@ -206,6 +208,9 @@ class MusicApp(App[None]):
                 s.status_message = f"Couldn't load playlists: {playlists}"
         else:
             s.playlists = playlists
+
+        if not isinstance(liked_ids, BaseException):
+            s.liked_track_ids = liked_ids
 
         if not isinstance(tracks, BaseException) and not isinstance(playlists, BaseException):
             s.status_message = (
@@ -402,6 +407,11 @@ class MusicApp(App[None]):
             self.refresh_all()
             return
 
+        if event.key == "l":
+            await self._toggle_like()
+            self.refresh_all()
+            return
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "search-input":
             return
@@ -489,6 +499,27 @@ class MusicApp(App[None]):
             f"Playing {s.now_playing.title}" if s.now_playing else "Playing"
         )
 
+    async def _toggle_like(self) -> None:
+        s = self.state
+        track = s.now_playing
+        if track is None:
+            s.status_message = "Nothing playing to like"
+            return
+
+        now_liked = track.id not in s.liked_track_ids
+        try:
+            await self._music.rate_song(track.id, now_liked)
+        except Exception as ex:
+            s.status_message = f"Couldn't update rating: {ex}"
+            return
+
+        if now_liked:
+            s.liked_track_ids.add(track.id)
+            s.status_message = f"Liked {track.title}"
+        else:
+            s.liked_track_ids.discard(track.id)
+            s.status_message = f"Unliked {track.title}"
+
     # ---- layout ------------------------------------------------------------
 
     def _apply_layout(self) -> None:
@@ -528,11 +559,11 @@ class MusicApp(App[None]):
     def _refresh_player_bar(self) -> None:
         s = self.state
         icon = "▶" if s.is_playing else "⏸"
-        line = (
-            f"{icon}  {s.now_playing.title} — {s.now_playing.artist}"
-            if s.now_playing
-            else "Nothing playing  ·  Enter play · Space pause · n/p skip"
-        )
+        if s.now_playing:
+            liked = " ♥" if s.now_playing.id in s.liked_track_ids else ""
+            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}"
+        else:
+            line = "Nothing playing  ·  Enter play · Space pause · n/p skip"
         pos = _format_seconds(s.position_seconds)
         dur = _format_seconds(s.duration_seconds)
         info = self.query_one("#player-info", Static)
