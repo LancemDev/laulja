@@ -141,7 +141,10 @@ class PlaylistsPanel(ListPanel):
 
 class LyricsPanel(ListPanel):
     def __init__(self, state: AppState, **kwargs) -> None:
-        super().__init__(**kwargs)
+        # Unlike Tracks/Playlists, lyrics content should wrap: the plain (unsynced) lyrics dump
+        # needs full lines readable rather than truncated, and the big block-letter rows are
+        # already word-wrapped to the panel width by _big_text_rows.
+        super().__init__(wrap=True, **kwargs)
         self.state = state
         self._rendered_key: Optional[tuple] = None
 

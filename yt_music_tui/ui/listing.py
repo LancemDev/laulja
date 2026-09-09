@@ -29,10 +29,24 @@ class ListPanel(VerticalScroll):
         scrollbar-background-hover: $surface;
         scrollbar-background-active: $surface;
     }
+
+    /* The reveal/scroll math below (_reveal, _reveal_centered) assumes one rendered row per
+       list item — it scrolls by row index. Textual's newer rendering pipeline converts a Rich
+       Text into its own Content object (Content.from_rich_text), which drops Text's own
+       no_wrap/overflow attributes, so those can't be set on the Text we build; wrapping has to
+       be turned off here, in CSS, instead. Without it, a line wider than the panel wraps onto
+       extra rows, and the row-index math drifts further off the longer the list gets scrolled —
+       eventually losing track of the selection so the highlighted row scrolls out of view. */
+    ListPanel.no-wrap > Static {
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, *, wrap: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
+        if not wrap:
+            self.add_class("no-wrap")
         self._body = Static()
 
     def compose(self):
