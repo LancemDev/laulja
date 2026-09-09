@@ -101,6 +101,13 @@ def _format_short_duration(d: Optional[timedelta]) -> str:
     return f"{m}:{s:02d}"
 
 
+def _format_seconds(total_seconds: float) -> str:
+    total = max(0, int(total_seconds))
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
 class HeaderBar(Static):
     def __init__(self, state: AppState, app_name: str, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -397,6 +404,62 @@ class BarVisualizerPanel(Static):
                 cells.append(_BAR_BLOCKS[idx])
             rows.append(" ".join(cells))
         self.update("\n".join(rows))
+
+
+class PlayerInfoBar(Static):
+    """The "now playing" bar, doubling as a progress indicator: a fill sweeps across it
+    left-to-right as the song plays — empty at 0:00, fully filled right as the track ends —
+    colored with the current art-derived theme's accent (art_theme.py) rather than a fixed
+    color, so it's actually the album/theme color.
+
+    Padded to this widget's own width and filled via a Rich Text background span rather than an
+    overlaid second widget: Textual's `layer:` CSS only reorders *non-overlapping* siblings
+    (floats/docked widgets, tooltips, etc.) — two plain same-container children on different
+    layers still don't actually paint over one another, confirmed empirically, so a real
+    "layered fill" widget silently renders as if the fill weren't there at all.
+
+    Uses `self.size.width` (this widget's real, post-layout outer size) minus its own known
+    border+padding, not `self.content_size` — that property doesn't reliably net out this
+    widget's border/padding (it was observed equal to the outer size, border included), so the
+    fill visibly fell short of the box's true right edge when computed from it directly."""
+
+    _BORDER_AND_PADDING_COLS = 4  # round border (1+1) + "padding: 0 1" (1+1)
+
+    DEFAULT_CSS = """
+    PlayerInfoBar {
+        height: 3;
+        border: round $primary;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, state: AppState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+
+    def refresh_content(self, accent: Optional[str] = None) -> None:
+        s = self.state
+        icon = "▶" if s.is_playing else "⏸"
+        if s.now_playing:
+            liked = " ♥" if s.now_playing.id in s.liked_track_ids else ""
+            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}"
+        else:
+            line = "Nothing playing  ·  Enter play · Space pause · n/p skip"
+        pos = _format_seconds(s.position_seconds)
+        dur = _format_seconds(s.duration_seconds)
+        text = f"{line}  [{pos} / {dur}]"
+
+        fill_style = f"black on {accent}" if accent else "reverse"
+        content_width = max(0, int(self.size.width) - self._BORDER_AND_PADDING_COLS)
+        width = max(len(text), content_width)
+        padded = text.ljust(width)
+        filled = int(max(0.0, min(1.0, s.progress_ratio)) * width)
+
+        display = Text()
+        if filled:
+            display.append(padded[:filled], style=fill_style)
+        display.append(padded[filled:])
+        self.update(display)
 
 
 _KEY_ACTIONS = [

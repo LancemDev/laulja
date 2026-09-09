@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.theme import Theme
-from textual.widgets import Input, ProgressBar, Static
+from textual.widgets import Input, ProgressBar
 
 from ..auth.session import AuthSession
 from ..config import AppConfig
@@ -24,6 +23,7 @@ from .widgets import (
     CoverArtPanel,
     HeaderBar,
     LyricsPanel,
+    PlayerInfoBar,
     PlaylistsPanel,
     QuickActionsBar,
     TracksPanel,
@@ -95,11 +95,6 @@ Screen {
 #player {
     height: 4;
 }
-#player-info {
-    height: 3;
-    border: round $primary;
-    padding: 0 1;
-}
 #player-gauge {
     height: 1;
 }
@@ -164,7 +159,7 @@ class MusicApp(App[None]):
                 yield BarVisualizerPanel(self.state, id="bar")
             yield LyricsPanel(self.state, id="lyrics")
         with Vertical(id="player"):
-            yield Static(id="player-info")
+            yield PlayerInfoBar(self.state, id="player-info")
             yield ProgressBar(id="player-gauge", total=1000, show_eta=False, show_percentage=False)
         yield QuickActionsBar(id="quickactions")
 
@@ -555,39 +550,7 @@ class MusicApp(App[None]):
         self.query_one(BarVisualizerPanel).refresh_content()
         self.query_one(LyricsPanel).refresh_content()
         self.query_one(QuickActionsBar).refresh_content()
-        self._refresh_player_bar()
 
-    def _refresh_player_bar(self) -> None:
-        s = self.state
-        icon = "▶" if s.is_playing else "⏸"
-        if s.now_playing:
-            liked = " ♥" if s.now_playing.id in s.liked_track_ids else ""
-            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}"
-        else:
-            line = "Nothing playing  ·  Enter play · Space pause · n/p skip"
-        pos = _format_seconds(s.position_seconds)
-        dur = _format_seconds(s.duration_seconds)
-        text = f"{line}  [{pos} / {dur}]"
-
-        # The "now playing" bar doubles as the progress indicator: reverse-video sweeps across
-        # it left-to-right as the song plays, so it reads as filling in — empty at 0:00, fully
-        # filled right as the track ends — rather than a separate scrubber next to it.
-        info = self.query_one("#player-info", Static)
-        width = max(len(text), int(info.content_size.width))
-        padded = text.ljust(width)
-        filled = int(s.progress_ratio * width)
-
-        display = Text()
-        if filled:
-            display.append(padded[:filled], style="reverse")
-        display.append(padded[filled:])
-        info.update(display)
-
-        self.query_one("#player-gauge", ProgressBar).update(progress=s.progress_ratio * 1000)
-
-
-def _format_seconds(total_seconds: float) -> str:
-    total = max(0, int(total_seconds))
-    h, rem = divmod(total, 3600)
-    m, sec = divmod(rem, 60)
-    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+        current_theme = self.get_theme(self.theme)
+        self.query_one(PlayerInfoBar).refresh_content(accent=current_theme.accent if current_theme else None)
+        self.query_one("#player-gauge", ProgressBar).update(progress=self.state.progress_ratio * 1000)
