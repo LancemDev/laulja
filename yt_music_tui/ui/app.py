@@ -206,6 +206,12 @@ class MusicApp(App[None]):
         s = self.state
         before = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
         self._player.tick()
+        # tick() only *schedules* next_track() (via ensure_future) rather than running it
+        # synchronously, so a diagnostic last_error set for the track that just ended (e.g. the
+        # stream getting cut short) is still readable here — grab it now, before that scheduled
+        # next_track() -> _start_current() clears last_error for the track it's advancing to.
+        if self._player.last_error:
+            s.status_message = self._player.last_error
         self._sync_player_state()
         after = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
         # Also repaint on nothing-changed ticks whenever something's still loading, so its

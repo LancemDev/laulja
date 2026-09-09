@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import shutil
 from typing import List, Optional
 
@@ -32,6 +33,8 @@ class AudioPlayerService:
         self._ffmpeg: Optional[asyncio.subprocess.Process] = None
         self._sink = None  # subprocess.Popen — stdin writes happen on a worker thread
         self._pump_task: Optional[asyncio.Task] = None
+        self._stderr_task: Optional[asyncio.Task] = None
+        self._ffmpeg_stderr_tail: str = ""
         self._samples_written = 0
         self._is_playing = False
         self._track_ended = False
@@ -118,9 +121,17 @@ class AudioPlayerService:
 
         try:
             ffmpeg = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", url,
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                # YouTube's CDN (googlevideo) URLs occasionally drop the connection mid-stream
+                # before the whole track has been sent. Without reconnect handling, ffmpeg just
+                # treats that dropped connection as EOF and exits — which _pump can't tell apart
+                # from a genuinely finished track, so playback silently stops short instead of
+                # erroring or retrying.
+                "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_at_eof", "1",
+                "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5",
+                "-i", url,
                 "-vn", "-ac", str(CHANNELS), "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
         except Exception as ex:
             self.last_error = f"Couldn't start ffmpeg: {ex}"
@@ -137,7 +148,30 @@ class AudioPlayerService:
         self._ffmpeg = ffmpeg
         self._sink = sink
         self._is_playing = True
+        self._ffmpeg_stderr_tail = ""
+        self._stderr_task = asyncio.ensure_future(self._drain_stderr(ffmpeg))
         self._pump_task = asyncio.ensure_future(self._pump(ffmpeg, sink))
+
+    async def _drain_stderr(self, ffmpeg: asyncio.subprocess.Process) -> None:
+        """Continuously reads ffmpeg's stderr into a bounded tail buffer for `_pump` to surface
+        if the process exits unexpectedly. Has to run for the process's whole lifetime rather
+        than reading it after exit — piped stderr has a small OS buffer, and if nothing drains
+        it while ffmpeg is still running, ffmpeg can block trying to write to it (e.g. while
+        retrying a dropped connection) and never get to actually producing more audio."""
+        assert ffmpeg.stderr is not None
+        tail: collections.deque = collections.deque(maxlen=40)
+        try:
+            while True:
+                line = await ffmpeg.stderr.readline()
+                if not line:
+                    break
+                tail.append(line.decode(errors="replace").rstrip())
+        except asyncio.CancelledError:
+            pass  # expected on stop/skip — the pipeline is being torn down deliberately
+        except Exception:
+            pass
+        finally:
+            self._ffmpeg_stderr_tail = "\n".join(tail)
 
     async def _pump(self, ffmpeg: asyncio.subprocess.Process, sink) -> None:
         loop = asyncio.get_running_loop()
@@ -157,6 +191,7 @@ class AudioPlayerService:
                     # the pipeline down, and _stop_pipeline()'s sink.kill() silences that tail
                     # before it's heard — the track visibly (audibly) cuts short of the end.
                     await self._drain_sink(sink)
+                    await self._check_incomplete_stream(ffmpeg)
                     self._track_ended = True
                     return
 
@@ -167,6 +202,42 @@ class AudioPlayerService:
             pass  # expected on stop/skip — the pipeline is being torn down deliberately
         except Exception:
             self._track_ended = True
+
+    async def _check_incomplete_stream(self, ffmpeg: asyncio.subprocess.Process) -> None:
+        """ffmpeg's stdout closing normally means it decoded the whole track — but it also
+        closes on a fatal input error (e.g. the CDN dropping the connection and reconnect
+        exhausting its retries), which looks identical to `_pump` beyond this point. Distinguish
+        the two by exit code and how much of the track's known duration was actually decoded, so
+        a stream that failed partway surfaces as an error instead of silently passing for a
+        track that simply ended."""
+        try:
+            returncode = await asyncio.wait_for(ffmpeg.wait(), timeout=2.0)
+        except Exception:
+            return
+        if returncode == 0:
+            return
+
+        # The process exiting doesn't guarantee _drain_stderr has already gotten scheduled to
+        # read its final EOF and flush the tail buffer — give it a brief chance to catch up
+        # before reading self._ffmpeg_stderr_tail below, without risking a real hang if it
+        # doesn't (shield so this timeout doesn't cancel the task; _stop_pipeline owns that).
+        if self._stderr_task and not self._stderr_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=1.0)
+            except Exception:
+                pass
+
+        played = self.position_seconds
+        if self.duration_seconds and played >= self.duration_seconds * 0.95:
+            return  # near enough the real end — not worth flagging over a rounding gap
+
+        detail = self._ffmpeg_stderr_tail.strip().splitlines()
+        where = f"{played:.0f}s of {self.duration_seconds:.0f}s" if self.duration_seconds else f"{played:.0f}s"
+        self.last_error = (
+            f"Stream cut short at {where} (ffmpeg exit {returncode}"
+            + (f": {detail[-1]}" if detail else "")
+            + ")"
+        )
 
     @staticmethod
     async def _drain_sink(sink) -> None:
@@ -196,6 +267,14 @@ class AudioPlayerService:
             except (asyncio.CancelledError, Exception):
                 pass
             self._pump_task = None
+
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._stderr_task = None
 
         if self._ffmpeg:
             try:
