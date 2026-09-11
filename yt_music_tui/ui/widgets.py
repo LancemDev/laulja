@@ -64,32 +64,38 @@ def _figlet_word_width(word: str, font: str) -> int:
     return max((len(row.rstrip()) for row in rendered.split("\n")), default=len(word))
 
 
-def _big_text_rows(text: str, width: int) -> list[str]:
-    """Renders `text` as big boxed-letter art, word-wrapped to `width` columns — the closest a
-    terminal can get to the reference video's large caption text, since actual font-size scaling
-    isn't something a terminal can do. Falls back to a narrower font, and finally to plain text,
-    rather than let a big font's letters be wider than the panel and force pyfiglet to split a
-    word mid-letter to make it "fit"."""
-    width = max(10, width)
-    words = text.split()
-
+def _pick_big_font(words: list[str], width: int) -> Optional[str]:
+    """Chooses one figlet font that fits every word in `words` at `width` columns. Picking this
+    once for the whole song (from every line's words) rather than per rendered line keeps the
+    block-letter art visually consistent instead of flipping fonts line to line whenever one
+    line happens to contain a longer word than its neighbours."""
     for font in _BIG_TEXT_FONTS:
-        if words and max(_figlet_word_width(w, font) for w in words) > width:
-            continue
+        if not words or max(_figlet_word_width(w, font) for w in words) <= width:
+            return font
+    return None
+
+
+def _big_text_rows(text: str, width: int, font: Optional[str]) -> list[str]:
+    """Renders `text` as big boxed-letter art in `font`, word-wrapped to `width` columns — the
+    closest a terminal can get to the reference video's large caption text, since actual
+    font-size scaling isn't something a terminal can do. Falls back to plain text if `font` is
+    None (nothing in _BIG_TEXT_FONTS fits every word of the song) or fails to render."""
+    width = max(10, width)
+    if font is not None:
         try:
             rendered = pyfiglet.Figlet(font=font, width=width).renderText(text)
+            rows = [row.rstrip() for row in rendered.split("\n")]
+            while rows and not rows[0]:
+                rows.pop(0)
+            while rows and not rows[-1]:
+                rows.pop()
+            if rows:
+                return rows
         except Exception:
-            continue
-        rows = [row.rstrip() for row in rendered.split("\n")]
-        while rows and not rows[0]:
-            rows.pop(0)
-        while rows and not rows[-1]:
-            rows.pop()
-        if rows:
-            return rows
+            pass
 
-    # Not even the narrowest big font's letters fit every word in this line — give up on
-    # block-letter art for it and just wrap plain text, which stays legible at any width.
+    # Not even the narrowest big font's letters fit every word of this song — give up on
+    # block-letter art and just wrap plain text, which stays legible at any width.
     return textwrap.wrap(text, width) or [text]
 
 
@@ -194,6 +200,8 @@ class LyricsPanel(ListPanel):
         super().__init__(wrap=True, **kwargs)
         self.state = state
         self._rendered_key: Optional[tuple] = None
+        self._font_key: Optional[tuple] = None
+        self._big_font: Optional[str] = None
 
     def refresh_content(self) -> None:
         self.border_title = "Lyrics"
@@ -228,11 +236,20 @@ class LyricsPanel(ListPanel):
             return
         self._rendered_key = key
 
+        # Pick the block-letter font once per song (per panel width) from every line's words,
+        # rather than per rendered line — so the active line never jumps fonts as playback
+        # moves from a line with short words to one with a longer word.
+        font_key = (id(lyrics), cols)
+        if font_key != self._font_key:
+            words = [w for line in lyrics.lines for w in (line.text or "").upper().split()]
+            self._big_font = _pick_big_font(words, cols)
+            self._font_key = font_key
+
         # Only the line being sung right now — not the lines around it — but rendered as big
         # block-letter text (word-wrapped to the panel width) instead of plain bold color, since
         # a terminal can't scale font size the way the reference video's caption does.
         line_text = (lyrics.lines[active].text or " ").upper()
-        block_rows = _big_text_rows(line_text, cols)
+        block_rows = _big_text_rows(line_text, cols, self._big_font)
         pad = max(0, (height - len(block_rows)) // 2)
 
         text = Text(justify="center")
