@@ -305,18 +305,29 @@ class LyricsPanel(ListPanel):
         return index
 
 
-def _cover_crop_box(source_size: tuple[int, int], target_ratio: float) -> tuple[int, int, int, int]:
-    """The centered crop box on `source_size` (width, height) matching `target_ratio`
-    (width/height) — the crop half of CSS `object-fit: cover`, deliberately without the resize
-    half, so the result stays at the source's own resolution."""
+def _cover_fit_size(source_size: tuple[int, int], max_cols: int, max_rows: int, cell_aspect: float) -> tuple[int, int]:
+    """The largest (cols, rows) cell box within (max_cols, max_rows) that keeps `source_size`'s
+    (width, height) pixel aspect ratio — CSS `object-fit: contain`, letterboxed instead of
+    cropped, so the whole image is always visible at its own proportions and just grows/shrinks
+    with the panel rather than having its edges cut to always fill it. `cell_aspect` (cell
+    width/height) converts between cell counts and the pixel-equivalent ratio math, same as the
+    fixed assumption used elsewhere in this class instead of a live (flaky) terminal query."""
     src_w, src_h = source_size
     src_ratio = src_w / src_h
+    max_cols, max_rows = max(1, max_cols), max(1, max_rows)
+    target_ratio = max_cols / max(1, round(max_rows / cell_aspect))
+
     if src_ratio > target_ratio:
-        new_w, new_h = max(1, round(src_h * target_ratio)), src_h
+        # Image is proportionately wider than the box — width is the constraint, letterbox
+        # top/bottom.
+        cols = max_cols
+        rows = max(1, round(cols / src_ratio * cell_aspect))
     else:
-        new_w, new_h = src_w, max(1, round(src_w / target_ratio))
-    left, top = (src_w - new_w) // 2, (src_h - new_h) // 2
-    return (left, top, left + new_w, top + new_h)
+        # Image is proportionately taller (or equal) — height is the constraint, pillarbox
+        # left/right.
+        rows = max_rows
+        cols = max(1, round(src_ratio * (rows / cell_aspect)))
+    return cols, rows
 
 
 class CoverArtPanel(Vertical):
@@ -336,10 +347,6 @@ class CoverArtPanel(Vertical):
     DEFAULT_CSS = """
     CoverArtPanel {
         align: center middle;
-    }
-    CoverArtPanel > #cover-image {
-        width: 100%;
-        height: 100%;
     }
     CoverArtPanel > .hidden {
         display: none;
@@ -397,21 +404,21 @@ class CoverArtPanel(Vertical):
             self._source_image = PILImage.open(io.BytesIO(art)).convert("RGB")
             self._source_key = source_key
 
-        # Crop to the panel's shape (like CSS `object-fit: cover`) so it fills completely at
-        # full size, undistorted — using the fixed cell-aspect assumption above, not a live
-        # terminal query, for the target ratio.
-        #
-        # Crop only — do NOT also resize down to (cols, rows). Those are terminal *cells*, not
-        # pixels (a cell is many pixels), and textual-image's renderers (sixel.py/tgp.py) already
-        # scale the image we hand them to the terminal's real pixel dimensions themselves, via
-        # get_cell_size(). Pre-shrinking to a cell-count-sized bitmap here fed a tiny image into
-        # that scaling step, which then stretched it back up — exactly what produced the blur.
+        # Size the widget itself to the largest box that fits within the panel without
+        # distorting the image's own aspect ratio (like CSS `object-fit: contain`), rather than
+        # always filling the panel and cropping/stretching to do it — so resizing the window
+        # shrinks or grows the art at its own proportions instead of changing what's visible.
+        # `align: center middle` on the parent then letterboxes/pillarboxes it. The source
+        # bitmap itself is handed over uncropped, at its own resolution — textual-image's
+        # renderers (sixel.py/tgp.py) scale it to the terminal's real pixel dimensions for
+        # whatever cell box we give the widget, via get_cell_size().
         key = (*source_key, cols, rows)
         if key != self._shown_key:
-            target_ratio = cols / max(1, round(rows / self._CELL_ASPECT))
-            fitted = self._source_image.crop(_cover_crop_box(self._source_image.size, target_ratio))
+            fit_cols, fit_rows = _cover_fit_size(self._source_image.size, cols, rows, self._CELL_ASPECT)
+            image_widget.styles.width = fit_cols
+            image_widget.styles.height = fit_rows
 
-            image_widget.image = fitted
+            image_widget.image = self._source_image
             image_widget.remove_class("hidden")
             status_widget.add_class("hidden")
             self._shown_key = key
