@@ -63,7 +63,7 @@ DevTools.
 ## Keybindings
 
 ```
-Tab        cycle focus between Tracks, Playlists, and Queue
+Tab        cycle focus between Tracks, Queue, and Playlists
 j/k, ↑/↓   move selection
 Enter      play selected track / playlist / queue item
 Space      play/pause

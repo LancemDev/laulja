@@ -30,7 +30,7 @@ from .widgets import (
     TracksPanel,
 )
 
-_LEFT_FOCUS_CYCLE = [LeftFocus.TRACKS, LeftFocus.PLAYLISTS, LeftFocus.QUEUE]
+_LEFT_FOCUS_CYCLE = [LeftFocus.TRACKS, LeftFocus.QUEUE, LeftFocus.PLAYLISTS]
 
 _CSS = """
 Screen {
@@ -67,11 +67,11 @@ Screen {
 #tracks {
     height: 45%;
 }
-#playlists {
-    height: 25%;
-}
 #queue {
     height: 30%;
+}
+#playlists {
+    height: 25%;
 }
 
 #center {
@@ -160,8 +160,8 @@ class MusicApp(App[None]):
         with Horizontal(id="body"):
             with Vertical(id="left"):
                 yield TracksPanel(self.state, id="tracks")
-                yield PlaylistsPanel(self.state, id="playlists")
                 yield QueuePanel(self.state, id="queue")
+                yield PlaylistsPanel(self.state, id="playlists")
             with Vertical(id="center"):
                 yield CoverArtPanel(self.state, id="cover")
                 yield BarVisualizerPanel(self.state, id="bar")
