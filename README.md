@@ -11,7 +11,7 @@ Python:
 | TUI framework        | Ratatui.cs                              | [Textual](https://textual.textualize.io/) |
 | YouTube Music API    | YouTubeMusicAPI                         | [ytmusicapi](https://ytmusicapi.readthedocs.io/) |
 | Stream URL resolution| YouTubeMusicAPI + YouTubeSessionGenerator (needs Node.js) | [yt-dlp](https://github.com/yt-dlp/yt-dlp) (no Node.js needed) |
-| Audio decode/output  | ffmpeg → pw-play/paplay/aplay           | same                             |
+| Audio decode/output  | ffmpeg → pw-play/paplay/aplay           | ffmpeg → PortAudio (`sounddevice`), falling back to pw-play/paplay/aplay on Linux |
 | Bar visualizer FFT   | hand-rolled radix-2 FFT                 | numpy                            |
 | Cookie decryption    | hand-rolled AES via `System.Security.Cryptography` | `cryptography`, same algorithm |
 | Lyrics               | LRCLIB                                  | same                             |
@@ -19,14 +19,31 @@ Python:
 ## Install
 
 ```bash
+pipx install yt-music-tui-py   # or: uv tool install yt-music-tui-py
+```
+
+`pipx`/`uv tool` give it its own isolated environment — no venv to manage, `pipx upgrade
+yt-music-tui-py` to update. Works on Linux, macOS, and Windows.
+
+To hack on it from a checkout instead:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-System dependencies (same as the original): `ffmpeg` for decoding, and one of `pw-play`
-(PipeWire), `paplay` (PulseAudio), or `aplay` (ALSA) for output. Linux is required for the
-automatic browser-cookie detection; other platforms work fine via the manual cookie-paste flow.
+**System dependency:** `ffmpeg` for decoding — install it via your OS's package manager
+(`apt install ffmpeg`, `brew install ffmpeg`, `scoop install ffmpeg`, …).
+
+Audio output uses [PortAudio](https://www.portaudio.com/) (via the `sounddevice` package,
+installed automatically) and works out of the box on all three platforms. On Linux, if
+PortAudio's system library (`libportaudio2`) isn't installed, it automatically falls back to
+shelling out to `pw-play` (PipeWire), `paplay` (PulseAudio), or `aplay` (ALSA) instead — so at
+least one of those four needs to be available.
+
+Automatic browser-cookie detection (see below) only runs on Linux; macOS and Windows fall back
+to the manual cookie-paste flow, which works the same everywhere.
 
 ## Run
 
@@ -46,11 +63,12 @@ DevTools.
 ## Keybindings
 
 ```
-Tab        switch focus between Tracks and Playlists
+Tab        cycle focus between Tracks, Playlists, and Queue
 j/k, ↑/↓   move selection
-Enter      play selected track / playlist
+Enter      play selected track / playlist / queue item
 Space      play/pause
 n / p      next / previous track
+x          remove the selected track from the Queue panel
 /          search (Esc cancels, Enter runs it)
 Esc        back to library from search results
 f          cycle fullscreen: normal → cover+bar → lyrics → normal
@@ -58,6 +76,12 @@ c          collapse the sidebar
 m          toggle minimalism (strip panel borders and the hint bar)
 q          quit
 ```
+
+Playing an individual track (library or search) starts a YouTube Music radio/mix seeded from
+it — a continuous queue of similar-vibe songs — rather than just the track alone; playing a
+playlist queues it in order instead. The Queue panel shows what's playing next: `Enter` jumps
+straight to a track, `x` removes one (the currently-playing track can't be removed this way —
+skip to it instead).
 
 ## Config
 
