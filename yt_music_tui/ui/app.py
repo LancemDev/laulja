@@ -498,7 +498,10 @@ class MusicApp(App[None]):
                 s.status_message = "Nothing to play"
                 return
 
-            await self._player.play_queue(tracks, s.tracks_selected_index)
+            # Start a radio/mix seeded from the picked track rather than just queuing the
+            # library/search list as-is — matches YouTube Music's own behavior of playing
+            # similar-vibe songs after whatever you selected.
+            await self._player.play_track_radio(tracks[s.tracks_selected_index])
 
         self._sync_player_state()
         s.status_message = self._player.last_error or (

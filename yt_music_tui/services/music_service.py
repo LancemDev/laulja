@@ -17,8 +17,27 @@ internally — without needing a local Node.js process.
 """
 
 
-def _duration(seconds: Optional[int]) -> Optional[timedelta]:
-    return timedelta(seconds=seconds) if seconds else None
+def _parse_length(length: Optional[str]) -> Optional[timedelta]:
+    """Parses the "m:ss" / "h:mm:ss" duration string ytmusicapi's watch-playlist endpoint
+    (get_watch_playlist, used for radio/mix queues) reports instead of search's plain
+    duration_seconds int."""
+    if not length:
+        return None
+    try:
+        parts = [int(p) for p in length.split(":")]
+    except ValueError:
+        return None
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    h, m, sec = parts[-3:]
+    return timedelta(hours=h, minutes=m, seconds=sec)
+
+
+def _track_duration(song: Dict[str, Any]) -> Optional[timedelta]:
+    seconds = song.get("duration_seconds")
+    if seconds:
+        return timedelta(seconds=seconds)
+    return _parse_length(song.get("length"))
 
 
 def _artist_names(artists: Optional[List[Dict[str, Any]]]) -> str:
@@ -47,8 +66,10 @@ def _to_track(song: Dict[str, Any]) -> Optional[Track]:
         title=song.get("title") or "Unknown",
         artist=_artist_names(song.get("artists")),
         album=_album_name(song.get("album")),
-        duration=_duration(song.get("duration_seconds")),
-        thumbnail_url=_thumbnail(song.get("thumbnails")),
+        duration=_track_duration(song),
+        # Search results key thumbnails as "thumbnails"; watch-playlist (radio/mix) tracks key
+        # the same shape as singular "thumbnail" instead.
+        thumbnail_url=_thumbnail(song.get("thumbnails") or song.get("thumbnail")),
     )
 
 
@@ -86,6 +107,14 @@ class MusicService:
     async def rate_song(self, track_id: str, liked: bool) -> None:
         rating = "LIKE" if liked else "INDIFFERENT"
         await asyncio.to_thread(self._client.rate_song, track_id, rating)
+
+    async def get_radio_tracks(self, track_id: str, limit: int = 25) -> List[Track]:
+        """Starts a YouTube Music "radio" (what the web/app UI calls a Mix) seeded from
+        `track_id` — the same continuous, similar-vibe queue YouTube Music builds for you when
+        you play an individual song outside a playlist. The seed track is included first."""
+        result = await asyncio.to_thread(self._client.get_watch_playlist, track_id, None, limit, True)
+        tracks = result.get("tracks") or []
+        return [t for t in (_to_track(item) for item in tracks) if t is not None]
 
     async def get_stream_url(self, track_id: str) -> str:
         return await asyncio.to_thread(_resolve_stream_url, track_id)

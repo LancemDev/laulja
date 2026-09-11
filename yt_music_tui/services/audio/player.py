@@ -29,6 +29,10 @@ class AudioPlayerService:
         self._analyzer = SpectrumAnalyzer()
         self._queue: List[Track] = []
         self._index = -1
+        # True when self._queue was seeded by play_track_radio() rather than play_queue() — a
+        # library/search selection or a playlist, respectively. Only a radio queue auto-extends
+        # itself with more similar-vibe tracks once it's played through; a playlist just loops.
+        self._queue_is_radio = False
 
         self._ffmpeg: Optional[asyncio.subprocess.Process] = None
         self._sink = None  # subprocess.Popen — stdin writes happen on a worker thread
@@ -69,12 +73,14 @@ class AudioPlayerService:
         async with self._action_lock:
             self._queue = [track]
             self._index = 0
+            self._queue_is_radio = False
             await self._start_current()
 
     async def play_queue(self, tracks: List[Track], start_index: int = 0) -> None:
         async with self._action_lock:
             self._queue = list(tracks)
             self._index = max(0, min(start_index, len(self._queue) - 1)) if self._queue else -1
+            self._queue_is_radio = False
 
             if not self._queue:
                 await self._stop_pipeline()
@@ -82,6 +88,26 @@ class AudioPlayerService:
                 self.duration_seconds = 0.0
                 return
 
+            await self._start_current()
+
+    async def play_track_radio(self, track: Track) -> None:
+        """Plays `track` the way YouTube Music itself does when you pick an individual song
+        outside a playlist: starts a radio/mix seeded from it and queues that, so playback keeps
+        going with similar-vibe tracks instead of just looping the one song. Falls back to
+        looping `track` alone if the radio fetch fails or comes back empty."""
+        async with self._action_lock:
+            try:
+                tracks = await self._music.get_radio_tracks(track.id)
+            except Exception:
+                tracks = []
+            if not tracks:
+                tracks = [track]
+
+            self._queue = tracks
+            self._queue_is_radio = True
+            # The radio isn't guaranteed to list the seed track first (or at all) — make sure
+            # playback actually starts on the track the user picked, not track 0 of the mix.
+            self._index = next((i for i, t in enumerate(tracks) if t.id == track.id), 0)
             await self._start_current()
 
     async def toggle_pause(self) -> None:
@@ -93,8 +119,23 @@ class AudioPlayerService:
         async with self._action_lock:
             if not self._queue:
                 return
+            if self._queue_is_radio and self._index == len(self._queue) - 1:
+                await self._extend_radio()
             self._index = (self._index + 1) % len(self._queue)
             await self._start_current()
+
+    async def _extend_radio(self) -> None:
+        """The radio queue's last track is about to finish — fetch more tracks in that same
+        vibe, seeded from it, so playback keeps going instead of wrapping back to the first
+        track. Mirrors YouTube Music's own endless-mix behavior. Leaves the queue untouched on
+        failure; next_track()'s modulo wraparound is still a reasonable fallback."""
+        seed = self._queue[self._index]
+        try:
+            more = await self._music.get_radio_tracks(seed.id)
+        except Exception:
+            return
+        existing_ids = {t.id for t in self._queue}
+        self._queue.extend(t for t in more if t.id not in existing_ids)
 
     async def previous_track(self) -> None:
         async with self._action_lock:
