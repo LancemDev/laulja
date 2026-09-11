@@ -515,7 +515,6 @@ _KEY_ACTIONS = [
     ("Enter", "play"),
     ("Space", "pause"),
     ("n/p", "next/prev"),
-    ("x", "remove (queue)"),
     ("l", "like"),
     ("/", "search"),
     ("f", "fullscreen"),
@@ -524,12 +523,25 @@ _KEY_ACTIONS = [
     ("q", "quit"),
 ]
 
+# "x remove" only does anything with the Queue panel focused, so it's spliced into the hint bar
+# there instead of always showing — matches _KEY_ACTIONS' own position for where it'd otherwise
+# sit, right after next/prev.
+_QUEUE_REMOVE_ACTION = ("x", "remove")
+
 
 class QuickActionsBar(Static):
+    def __init__(self, state: AppState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+
     def refresh_content(self) -> None:
         # Keys get a boxed "keycap" look so they read as literal keys to press, distinct from
         # the plain-text action next to them — a flat "Tab focus" run-on reads ambiguous to
         # someone who doesn't already know the bindings.
+        actions = list(_KEY_ACTIONS)
+        if self.state.left_focus == LeftFocus.QUEUE:
+            actions.insert(5, _QUEUE_REMOVE_ACTION)
+
         divider = "   "
-        pairs = (f"[b reverse] {key} [/]  {action}" for key, action in _KEY_ACTIONS)
+        pairs = (f"[b reverse] {key} [/]  {action}" for key, action in actions)
         self.update(divider.join(pairs))

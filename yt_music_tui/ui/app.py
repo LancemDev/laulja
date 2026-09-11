@@ -169,7 +169,7 @@ class MusicApp(App[None]):
         with Vertical(id="player"):
             yield PlayerInfoBar(self.state, id="player-info")
             yield ProgressBar(id="player-gauge", total=1000, show_eta=False, show_percentage=False)
-        yield QuickActionsBar(id="quickactions")
+        yield QuickActionsBar(self.state, id="quickactions")
 
     async def on_mount(self) -> None:
         # Only the search Input should ever hold real focus; everywhere else our own on_key
