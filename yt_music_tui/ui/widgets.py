@@ -233,7 +233,7 @@ class LyricsPanel(ListPanel):
         self._font_key: Optional[tuple] = None
         self._big_font: Optional[str] = None
 
-    def refresh_content(self) -> None:
+    def refresh_content(self, accent: Optional[str] = None) -> None:
         self.border_title = "Lyrics"
         s = self.state
         lyrics = s.lyrics
@@ -258,10 +258,10 @@ class LyricsPanel(ListPanel):
         cols = max(1, int(self.size.width))
         height = max(1, int(self.size.height))
 
-        # Only the active line (or panel size) changing should trigger a repaint + scroll —
-        # re-triggering the scroll animation every tick with the same target would keep
-        # restarting it mid-flight instead of ever settling.
-        key = (id(lyrics), active, cols, height)
+        # Only the active line (or panel size, or the art-derived accent color) changing should
+        # trigger a repaint + scroll — re-triggering the scroll animation every tick with the
+        # same target would keep restarting it mid-flight instead of ever settling.
+        key = (id(lyrics), active, cols, height, accent)
         if key == self._rendered_key:
             return
         self._rendered_key = key
@@ -282,13 +282,18 @@ class LyricsPanel(ListPanel):
         block_rows = _big_text_rows(line_text, cols, self._big_font)
         pad = max(0, (height - len(block_rows)) // 2)
 
+        # Colored with the current art-derived theme's accent (art_theme.py), same as the
+        # now-playing bar's fill — falls back to a fixed color only until the first cover art
+        # loads and a theme accent actually exists.
+        line_style = f"bold {accent}" if accent else "bold cyan1"
+
         text = Text(justify="center")
         if pad:
             text.append("\n" * pad)
         for i, row in enumerate(block_rows):
             if i:
                 text.append("\n")
-            text.append(row, style="bold cyan1")
+            text.append(row, style=line_style)
         if pad:
             text.append("\n" * pad)
 
