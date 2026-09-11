@@ -25,9 +25,12 @@ from .widgets import (
     LyricsPanel,
     PlayerInfoBar,
     PlaylistsPanel,
+    QueuePanel,
     QuickActionsBar,
     TracksPanel,
 )
+
+_LEFT_FOCUS_CYCLE = [LeftFocus.TRACKS, LeftFocus.PLAYLISTS, LeftFocus.QUEUE]
 
 _CSS = """
 Screen {
@@ -62,10 +65,13 @@ Screen {
 }
 
 #tracks {
-    height: 60%;
+    height: 45%;
 }
 #playlists {
-    height: 40%;
+    height: 25%;
+}
+#queue {
+    height: 30%;
 }
 
 #center {
@@ -109,6 +115,7 @@ Screen {
    content — tracks/playlists/lyrics/player-info otherwise carry the same border as before. */
 Screen.minimal #tracks,
 Screen.minimal #playlists,
+Screen.minimal #queue,
 Screen.minimal #lyrics,
 Screen.minimal #player-info {
     border: none;
@@ -154,6 +161,7 @@ class MusicApp(App[None]):
             with Vertical(id="left"):
                 yield TracksPanel(self.state, id="tracks")
                 yield PlaylistsPanel(self.state, id="playlists")
+                yield QueuePanel(self.state, id="queue")
             with Vertical(id="center"):
                 yield CoverArtPanel(self.state, id="cover")
                 yield BarVisualizerPanel(self.state, id="bar")
@@ -247,6 +255,10 @@ class MusicApp(App[None]):
         s.position_seconds = self._player.position_seconds
         s.duration_seconds = self._player.duration_seconds
         s.queue = self._player.queue
+        # The queue can change out from under the queue view's own selection (auto-advance,
+        # radio auto-extend, a remove shifting indices) — reclamp here rather than only where
+        # the view itself edits it, so a stale index never renders as if nothing were selected.
+        s.queue_selected_index = max(0, min(s.queue_selected_index, len(s.queue) - 1)) if s.queue else 0
         s.visualizer_levels = self._player.visualizer_levels
 
         new_id = s.now_playing.id if s.now_playing else None
@@ -341,7 +353,8 @@ class MusicApp(App[None]):
             return
 
         if event.key == "tab":
-            s.left_focus = LeftFocus.PLAYLISTS if s.left_focus == LeftFocus.TRACKS else LeftFocus.TRACKS
+            i = _LEFT_FOCUS_CYCLE.index(s.left_focus)
+            s.left_focus = _LEFT_FOCUS_CYCLE[(i + 1) % len(_LEFT_FOCUS_CYCLE)]
             self.refresh_all()
             return
 
@@ -400,6 +413,11 @@ class MusicApp(App[None]):
             self._launch(self._toggle_like(), loading="Updating rating…")
             return
 
+        if event.key == "x":
+            if s.left_focus == LeftFocus.QUEUE and s.queue:
+                self._launch(self._remove_queue_selection(), loading="Removing…")
+            return
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "search-input":
             return
@@ -449,11 +467,16 @@ class MusicApp(App[None]):
             if count == 0:
                 return
             s.tracks_selected_index = max(0, min(s.tracks_selected_index + delta, count - 1))
-        else:
+        elif s.left_focus == LeftFocus.PLAYLISTS:
             count = len(s.playlists)
             if count == 0:
                 return
             s.playlists_selected_index = max(0, min(s.playlists_selected_index + delta, count - 1))
+        else:
+            count = len(s.queue)
+            if count == 0:
+                return
+            s.queue_selected_index = max(0, min(s.queue_selected_index + delta, count - 1))
 
     def _launch(self, coro, *, loading: str) -> None:
         """Runs `coro` in the background and repaints once it's done, instead of awaiting it
@@ -492,6 +515,12 @@ class MusicApp(App[None]):
                 return
 
             await self._player.play_queue(tracks, 0)
+        elif s.left_focus == LeftFocus.QUEUE:
+            if not s.queue:
+                s.status_message = "Queue is empty"
+                return
+
+            await self._player.play_at(s.queue_selected_index)
         else:
             tracks = s.displayed_tracks
             if not tracks:
@@ -517,6 +546,19 @@ class MusicApp(App[None]):
         await self._player.previous_track()
         self._sync_player_state()
         self.state.status_message = self._player.last_error or "Previous track"
+
+    async def _remove_queue_selection(self) -> None:
+        s = self.state
+        index = s.queue_selected_index
+        error = await self._player.remove_at(index)
+        self._sync_player_state()
+        if error:
+            s.status_message = error
+            return
+
+        # Keep the selection sane after the list shrank by one.
+        s.queue_selected_index = max(0, min(index, len(s.queue) - 1))
+        s.status_message = "Removed from queue"
 
     async def _toggle_like(self) -> None:
         s = self.state
@@ -569,6 +611,7 @@ class MusicApp(App[None]):
         self.query_one(HeaderBar).refresh_content()
         self.query_one(TracksPanel).refresh_content()
         self.query_one(PlaylistsPanel).refresh_content()
+        self.query_one(QueuePanel).refresh_content()
         self.query_one(CoverArtPanel).refresh_content()
         self.query_one(BarVisualizerPanel).refresh_content()
         self.query_one(LyricsPanel).refresh_content()

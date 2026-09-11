@@ -192,6 +192,36 @@ class PlaylistsPanel(ListPanel):
         self.set_lines(text, s.playlists_selected_index, len(s.playlists))
 
 
+class QueuePanel(ListPanel):
+    def __init__(self, state: AppState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+
+    def refresh_content(self) -> None:
+        s = self.state
+        title = "Queue"
+        if s.left_focus == LeftFocus.QUEUE:
+            title = f"▶ {title}"
+        self.border_title = title
+
+        queue = s.queue
+        if not queue:
+            self.set_lines("Queue is empty.", None, 0)
+            return
+
+        now_playing_id = s.now_playing.id if s.now_playing else None
+        text = Text()
+        for i, t in enumerate(queue):
+            marker = "♪ " if t.id == now_playing_id else "  "
+            line = f"{marker}{t.title}  ·  {t.artist}  [{_format_short_duration(t.duration)}]"
+            style = "reverse" if i == s.queue_selected_index else ""
+            if i:
+                text.append("\n")
+            text.append(line, style=style)
+
+        self.set_lines(text, s.queue_selected_index, len(queue))
+
+
 class LyricsPanel(ListPanel):
     def __init__(self, state: AppState, **kwargs) -> None:
         # Unlike Tracks/Playlists, lyrics content should wrap: the plain (unsynced) lyrics dump
@@ -485,6 +515,7 @@ _KEY_ACTIONS = [
     ("Enter", "play"),
     ("Space", "pause"),
     ("n/p", "next/prev"),
+    ("x", "remove (queue)"),
     ("l", "like"),
     ("/", "search"),
     ("f", "fullscreen"),

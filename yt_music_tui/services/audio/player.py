@@ -144,6 +144,31 @@ class AudioPlayerService:
             self._index = (self._index - 1) % len(self._queue)
             await self._start_current()
 
+    async def play_at(self, index: int) -> None:
+        """Jumps straight to a specific queue position — the queue view's "play this one now"
+        action, rather than stepping one track at a time via next/previous."""
+        async with self._action_lock:
+            if not (0 <= index < len(self._queue)):
+                return
+            self._index = index
+            await self._start_current()
+
+    async def remove_at(self, index: int) -> Optional[str]:
+        """Removes the track at `index` from the queue — the queue view's quick-remove action.
+        Refuses to remove the track currently playing (skip/previous is what that's for) rather
+        than yank it out from under the in-flight ffmpeg pipeline. Returns an error message on
+        failure, None on success."""
+        async with self._action_lock:
+            if not (0 <= index < len(self._queue)):
+                return "Invalid queue position"
+            if index == self._index:
+                return "Can't remove the track that's currently playing"
+
+            del self._queue[index]
+            if index < self._index:
+                self._index -= 1
+            return None
+
     def tick(self) -> None:
         if not self._track_ended:
             return

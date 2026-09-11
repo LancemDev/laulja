@@ -10,6 +10,7 @@ from ..models import Lyrics, Playlist, Track
 class LeftFocus(Enum):
     TRACKS = "tracks"
     PLAYLISTS = "playlists"
+    QUEUE = "queue"
 
 
 class FullScreenMode(Enum):
@@ -33,6 +34,7 @@ class AppState:
 
     tracks_selected_index: int = 0
     playlists_selected_index: int = 0
+    queue_selected_index: int = 0
 
     library_tracks: List[Track] = field(default_factory=list)
     search_results: List[Track] = field(default_factory=list)
