@@ -133,7 +133,7 @@ class TracksPanel(ListPanel):
         s = self.state
         title = (
             f"Search: /{s.search_query}█"
-            if s.is_searching
+            if s.is_searching and s.search_target == LeftFocus.TRACKS
             else f"Tracks · Search: {s.search_query}"
             if s.is_showing_search_results
             else "Tracks · Library"
@@ -169,27 +169,34 @@ class PlaylistsPanel(ListPanel):
 
     def refresh_content(self) -> None:
         s = self.state
-        title = "Playlists"
+        title = (
+            f"Search: /{s.search_query}█"
+            if s.is_searching and s.search_target == LeftFocus.PLAYLISTS
+            else f"Playlists · Search: {s.search_query}"
+            if s.is_showing_playlist_search_results
+            else "Playlists"
+        )
         if s.left_focus == LeftFocus.PLAYLISTS:
             title = f"▶ {title}"
         self.border_title = title
 
-        if not s.playlists:
-            if s.is_loading_library:
+        playlists = s.displayed_playlists
+        if not playlists:
+            if s.is_loading_library and not s.is_showing_playlist_search_results:
                 self.set_lines(f"{_spinner()} Loading your playlists…", None, 0)
             else:
-                self.set_lines("No playlists yet.", None, 0)
+                self.set_lines("No results." if s.is_showing_playlist_search_results else "No playlists yet.", None, 0)
             return
 
         text = Text()
-        for i, p in enumerate(s.playlists):
+        for i, p in enumerate(playlists):
             line = f"{p.title}  ({p.track_count})"
             style = "reverse" if i == s.playlists_selected_index else ""
             if i:
                 text.append("\n")
             text.append(line, style=style)
 
-        self.set_lines(text, s.playlists_selected_index, len(s.playlists))
+        self.set_lines(text, s.playlists_selected_index, len(playlists))
 
 
 class QueuePanel(ListPanel):

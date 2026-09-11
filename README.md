@@ -69,7 +69,7 @@ Enter      play selected track / playlist / queue item
 Space      play/pause
 n / p      next / previous track
 x          remove the selected track from the Queue panel
-/          search (Esc cancels, Enter runs it)
+/          search — Tracks or Playlists, whichever panel is focused (Esc cancels, Enter runs it)
 Esc        back to library from search results
 f          cycle fullscreen: normal → cover+bar → lyrics → normal
 c          collapse the sidebar

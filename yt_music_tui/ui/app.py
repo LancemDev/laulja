@@ -332,15 +332,20 @@ class MusicApp(App[None]):
             return
 
         if event.key == "escape":
-            if s.is_showing_search_results:
+            if s.is_showing_search_results or s.is_showing_playlist_search_results:
                 s.is_showing_search_results = False
+                s.is_showing_playlist_search_results = False
                 s.tracks_selected_index = 0
+                s.playlists_selected_index = 0
                 s.status_message = "Back to library"
                 self.refresh_all()
             return
 
         if event.key == "slash":
             s.is_searching = True
+            # Search whichever list is focused — Queue counts as Tracks, since there's no such
+            # thing as "searching the queue".
+            s.search_target = LeftFocus.PLAYLISTS if s.left_focus == LeftFocus.PLAYLISTS else LeftFocus.TRACKS
             s.search_query = ""
             s.status_message = "Search — type and press Enter"
             search_input = self.query_one("#search-input", Input)
@@ -432,6 +437,18 @@ class MusicApp(App[None]):
         if not s.search_query.strip():
             s.status_message = "Empty query"
             s.is_showing_search_results = False
+            s.is_showing_playlist_search_results = False
+        elif s.search_target == LeftFocus.PLAYLISTS:
+            s.is_showing_playlist_search_results = True
+            try:
+                playlists = await self._music.search_playlists(s.search_query)
+                s.playlist_search_results = playlists
+                s.playlists_selected_index = 0
+                s.left_focus = LeftFocus.PLAYLISTS
+                s.status_message = f"{len(playlists)} playlist(s)"
+            except Exception as ex:
+                s.playlist_search_results = []
+                s.status_message = f"Search failed: {ex}"
         else:
             s.is_showing_search_results = True
             try:
@@ -468,7 +485,7 @@ class MusicApp(App[None]):
                 return
             s.tracks_selected_index = max(0, min(s.tracks_selected_index + delta, count - 1))
         elif s.left_focus == LeftFocus.PLAYLISTS:
-            count = len(s.playlists)
+            count = len(s.displayed_playlists)
             if count == 0:
                 return
             s.playlists_selected_index = max(0, min(s.playlists_selected_index + delta, count - 1))
@@ -499,11 +516,11 @@ class MusicApp(App[None]):
     async def _play_selection(self) -> None:
         s = self.state
         if s.left_focus == LeftFocus.PLAYLISTS:
-            if not s.playlists:
+            if not s.displayed_playlists:
                 s.status_message = "No playlists"
                 return
 
-            playlist = s.playlists[s.playlists_selected_index]
+            playlist = s.displayed_playlists[s.playlists_selected_index]
             try:
                 tracks = await self._music.get_playlist_tracks(playlist.id)
             except Exception as ex:

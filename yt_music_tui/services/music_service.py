@@ -73,6 +73,22 @@ def _to_track(song: Dict[str, Any]) -> Optional[Track]:
     )
 
 
+def _to_playlist(item: Dict[str, Any]) -> Optional[Playlist]:
+    # Search's "playlist" result keys the id as "browseId" ("VL" + the real playlist id, or
+    # already "VL"-prefixed for some results) rather than search-songs' "videoId"/library's bare
+    # "playlistId" — but get_playlist() accepts either form, so no stripping needed here.
+    playlist_id = item.get("browseId")
+    if not playlist_id:
+        return None
+    count = item.get("itemCount")
+    return Playlist(
+        id=playlist_id,
+        title=item.get("title") or "Untitled",
+        description=item.get("author"),
+        track_count=count if isinstance(count, int) else 0,
+    )
+
+
 class MusicService:
     """Thin async wrapper around ytmusicapi — a blocking library run in worker threads."""
 
@@ -95,6 +111,11 @@ class MusicService:
         results = await asyncio.to_thread(self._client.search, query, "songs", None, 25)
         tracks = [t for t in (_to_track(r) for r in results) if t is not None]
         return SearchResults(tracks=tracks[:25])
+
+    async def search_playlists(self, query: str) -> List[Playlist]:
+        results = await asyncio.to_thread(self._client.search, query, "playlists", None, 25)
+        playlists = [p for p in (_to_playlist(r) for r in results) if p is not None]
+        return playlists[:25]
 
     async def get_playlist_tracks(self, playlist_id: str) -> List[Track]:
         playlist = await asyncio.to_thread(self._client.get_playlist, playlist_id, None)

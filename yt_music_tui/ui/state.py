@@ -25,6 +25,12 @@ class AppState:
     search_query: str = ""
     is_searching: bool = False
     is_showing_search_results: bool = False
+    is_showing_playlist_search_results: bool = False
+    # Which panel a search was launched from (Tracks vs Playlists — Queue counts as Tracks,
+    # since there's no such thing as "searching the queue"), snapshotted when '/' is pressed
+    # rather than re-read from left_focus later, so the typing indicator and submit both agree
+    # on where the search is headed even though left_focus itself can't change mid-search.
+    search_target: LeftFocus = LeftFocus.TRACKS
 
     left_focus: LeftFocus = LeftFocus.TRACKS
     full_screen_mode: FullScreenMode = FullScreenMode.NONE
@@ -39,6 +45,7 @@ class AppState:
     library_tracks: List[Track] = field(default_factory=list)
     search_results: List[Track] = field(default_factory=list)
     playlists: List[Playlist] = field(default_factory=list)
+    playlist_search_results: List[Playlist] = field(default_factory=list)
     queue: List[Track] = field(default_factory=list)
 
     now_playing: Optional[Track] = None
@@ -60,6 +67,10 @@ class AppState:
     @property
     def displayed_tracks(self) -> List[Track]:
         return self.search_results if self.is_showing_search_results else self.library_tracks
+
+    @property
+    def displayed_playlists(self) -> List[Playlist]:
+        return self.playlist_search_results if self.is_showing_playlist_search_results else self.playlists
 
     @property
     def progress_ratio(self) -> float:
