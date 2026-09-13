@@ -560,6 +560,10 @@ class MusicApp(App[None]):
         self.state.status_message = self._player.last_error or "Next track"
 
     async def _previous_track(self) -> None:
+        if self._player.queue and self._player.index <= 0:
+            self.state.status_message = "Already at the first track"
+            return
+
         await self._player.previous_track()
         self._sync_player_state()
         self.state.status_message = self._player.last_error or "Previous track"

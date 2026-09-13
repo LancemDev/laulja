@@ -66,6 +66,10 @@ class AudioPlayerService:
         return self._queue
 
     @property
+    def index(self) -> int:
+        return self._index
+
+    @property
     def visualizer_levels(self) -> List[int]:
         return self._analyzer.bars
 
@@ -139,9 +143,9 @@ class AudioPlayerService:
 
     async def previous_track(self) -> None:
         async with self._action_lock:
-            if not self._queue:
+            if not self._queue or self._index <= 0:
                 return
-            self._index = (self._index - 1) % len(self._queue)
+            self._index -= 1
             await self._start_current()
 
     async def play_at(self, index: int) -> None:
