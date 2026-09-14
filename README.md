@@ -1,7 +1,7 @@
-# yt-music-tui-py
+# Laulja
 
-A terminal UI for YouTube Music, built in Python: real playback, a live FFT bar visualizer, and
-synced lyrics, all from the terminal.
+Laulja is a yt-music-tui in Python — a terminal UI for YouTube Music with real playback, a live
+FFT bar visualizer, and synced lyrics, all from the terminal.
 
 It's built on:
 
