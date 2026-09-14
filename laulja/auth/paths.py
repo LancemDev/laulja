@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_FOLDER_NAME = "yt-music-tui-py"
+APP_FOLDER_NAME = "laulja"
 COOKIES_FILE_NAME = "cookies.txt"
 SESSION_FILE_NAME = "session.json"
 

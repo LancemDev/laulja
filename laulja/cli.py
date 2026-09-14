@@ -122,7 +122,7 @@ async def _run_cli(args: list[str], auth: AuthService, config: AppConfig) -> int
 
     if command in ("--import-cookies", "import-cookies"):
         if len(args) < 2:
-            print("Usage: yt-music-tui --import-cookies <path-to-cookies>", file=sys.stderr)
+            print("Usage: laulja --import-cookies <path-to-cookies>", file=sys.stderr)
             return 2
         try:
             imported = auth.import_cookies(args[1])
@@ -156,7 +156,7 @@ def _print_session(session: AuthSession) -> None:
 
 def _print_help() -> None:
     print(
-        """yt-music-tui (Python)
+        """laulja
 
   (no args)                 Start TUI (opens browser login if needed)
   --login                   Force browser sign-in flow

@@ -1,5 +1,5 @@
 [project]
-name = "yt-music-tui-py"
+name = "laulja"
 version = "0.2.0"
 description = "A terminal UI for YouTube Music — real playback, a live FFT bar visualizer, synced lyrics, and YouTube Music radio/mix."
 readme = "README.md"
@@ -33,11 +33,11 @@ Repository = "https://github.com/LancemDev/laulja"
 Issues = "https://github.com/LancemDev/laulja/issues"
 
 [project.scripts]
-yt-music-tui = "yt_music_tui.cli:main"
+laulja = "laulja.cli:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["yt_music_tui*"]
+include = ["laulja*"]

@@ -2,7 +2,7 @@ name: Publish to PyPI
 
 # Fires on a version tag push (e.g. `git tag v0.2.0 && git push origin v0.2.0`). Uses PyPI's
 # Trusted Publisher OIDC flow instead of a stored API token — nothing to rotate or leak. Before
-# the first release, register this workflow as a trusted publisher for the `yt-music-tui-py`
+# the first release, register this workflow as a trusted publisher for the `laulja`
 # project at https://pypi.org/manage/account/publishing/ (repo owner/name, workflow filename
 # "publish.yml", environment "pypi" — matching this file exactly).
 on:
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/yt-music-tui-py
+      url: https://pypi.org/p/laulja
     permissions:
       id-token: write # required for Trusted Publishing — no API token needed
     steps:
