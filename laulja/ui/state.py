@@ -38,7 +38,7 @@ class AppState:
     # Normally Tracks/Queue/Playlists all show at once, stacked and height-sliced. Paged mode
     # instead shows only whichever one is left_focus, at the sidebar's full height — trading
     # "see all three" for "see one long list without scrolling", navigated with left/right.
-    is_sidebar_paged: bool = False
+    is_sidebar_paged: bool = True
     is_minimal: bool = False
     is_loading_library: bool = True
 
