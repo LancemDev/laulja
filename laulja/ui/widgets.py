@@ -541,6 +541,7 @@ _KEY_ACTIONS = [
     ("/", "search"),
     ("f", "fullscreen"),
     ("c", "collapse"),
+    ("v", "single view"),
     ("m", "minimal"),
     ("o", "sign out"),
     ("q", "quit"),
@@ -550,6 +551,10 @@ _KEY_ACTIONS = [
 # there instead of always showing — matches _KEY_ACTIONS' own position for where it'd otherwise
 # sit, right after next/prev.
 _QUEUE_REMOVE_ACTION = ("x", "remove")
+
+# "←/→ switch panel" only means anything once single-view ("v") is on — the sidebar's three
+# panels are all visible at once otherwise, so there's nothing to switch between.
+_PAGED_NAV_ACTION = ("←/→", "switch panel")
 
 
 class QuickActionsBar(Static):
@@ -564,6 +569,8 @@ class QuickActionsBar(Static):
         actions = list(_KEY_ACTIONS)
         if self.state.left_focus == LeftFocus.QUEUE:
             actions.insert(5, _QUEUE_REMOVE_ACTION)
+        if self.state.is_sidebar_paged:
+            actions.insert(1, _PAGED_NAV_ACTION)
 
         divider = "   "
         pairs = (f"[b reverse] {key} [/]  {action}" for key, action in actions)

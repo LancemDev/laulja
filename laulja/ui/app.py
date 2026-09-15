@@ -74,6 +74,14 @@ Screen {
 #playlists {
     height: 25%;
 }
+/* Paged sidebar mode ("v"): only the focused one of tracks/queue/playlists is visible, filling
+   the whole sidebar instead of its usual height-sliced share. */
+#tracks.hidden, #queue.hidden, #playlists.hidden {
+    display: none;
+}
+#tracks.fill, #queue.fill, #playlists.fill {
+    height: 1fr;
+}
 
 #center {
     width: 1fr;
@@ -361,8 +369,18 @@ class MusicApp(App[None]):
             return
 
         if event.key == "tab":
-            i = _LEFT_FOCUS_CYCLE.index(s.left_focus)
-            s.left_focus = _LEFT_FOCUS_CYCLE[(i + 1) % len(_LEFT_FOCUS_CYCLE)]
+            self._move_left_focus(1)
+            self.refresh_all()
+            return
+
+        if event.key == "v":
+            s.is_sidebar_paged = not s.is_sidebar_paged
+            self._apply_layout()
+            self.refresh_all()
+            return
+
+        if event.key in ("left", "right") and s.is_sidebar_paged:
+            self._move_left_focus(1 if event.key == "right" else -1)
             self.refresh_all()
             return
 
@@ -484,6 +502,12 @@ class MusicApp(App[None]):
         search_input.can_focus = False
         self.set_focus(None)
         self.refresh_all()
+
+    def _move_left_focus(self, delta: int) -> None:
+        s = self.state
+        i = _LEFT_FOCUS_CYCLE.index(s.left_focus)
+        s.left_focus = _LEFT_FOCUS_CYCLE[(i + delta) % len(_LEFT_FOCUS_CYCLE)]
+        self._apply_layout()
 
     def _move_selection(self, delta: int) -> None:
         s = self.state
@@ -633,6 +657,19 @@ class MusicApp(App[None]):
             center.remove_class("hidden")
             lyrics.remove_class("hidden")
             lyrics.remove_class("fill")
+
+        panels = {
+            LeftFocus.TRACKS: self.query_one("#tracks"),
+            LeftFocus.QUEUE: self.query_one("#queue"),
+            LeftFocus.PLAYLISTS: self.query_one("#playlists"),
+        }
+        for focus, panel in panels.items():
+            if s.is_sidebar_paged and focus != s.left_focus:
+                panel.add_class("hidden")
+                panel.remove_class("fill")
+            else:
+                panel.remove_class("hidden")
+                panel.set_class(s.is_sidebar_paged, "fill")
 
     # ---- rendering -----------------------------------------------------------
 
