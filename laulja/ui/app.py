@@ -9,6 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.theme import Theme
 from textual.widgets import Input, ProgressBar
 
+from ..auth.service import AuthService
 from ..auth.session import AuthSession
 from ..config import AppConfig
 from ..models import Track
@@ -142,6 +143,7 @@ class MusicApp(App[None]):
         lyrics: LyricsService,
         cover_art: CoverArtService,
         auth: AuthSession,
+        auth_service: AuthService,
     ) -> None:
         super().__init__()
         self._config = config
@@ -150,6 +152,7 @@ class MusicApp(App[None]):
         self._lyrics = lyrics
         self._cover_art = cover_art
         self._auth = auth
+        self._auth_service = auth_service
         self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
         self._lyrics_request_id = 0
         self._cover_art_request_id = 0
@@ -423,6 +426,11 @@ class MusicApp(App[None]):
                 self._launch(self._remove_queue_selection(), loading="Removing…")
             return
 
+        if event.key == "o":
+            self._auth_service.sign_out()
+            self.exit(message="Signed out. You'll need to sign in again next time you start laulja.")
+            return
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "search-input":
             return
@@ -637,7 +645,7 @@ class MusicApp(App[None]):
         self.query_one(PlaylistsPanel).refresh_content()
         self.query_one(QueuePanel).refresh_content()
         self.query_one(CoverArtPanel).refresh_content()
-        self.query_one(BarVisualizerPanel).refresh_content()
+        self.query_one(BarVisualizerPanel).refresh_content(color=accent)
         self.query_one(LyricsPanel).refresh_content(accent=accent)
         self.query_one(QuickActionsBar).refresh_content()
         self.query_one(PlayerInfoBar).refresh_content(accent=accent)

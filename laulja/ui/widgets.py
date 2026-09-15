@@ -451,7 +451,7 @@ class BarVisualizerPanel(Static):
         super().__init__(**kwargs)
         self.state = state
 
-    def refresh_content(self) -> None:
+    def refresh_content(self, color: Optional[str] = None) -> None:
         levels = self.state.visualizer_levels
         if not levels:
             self.update("")
@@ -469,7 +469,10 @@ class BarVisualizerPanel(Static):
                 idx = int(round(cell_value * (len(_BAR_BLOCKS) - 1)))
                 cells.append(_BAR_BLOCKS[idx])
             rows.append(" ".join(cells))
-        self.update("\n".join(rows))
+        # Colored with the current art-derived theme's accent (same as the lyrics/now-playing
+        # fill) — falls back to a fixed color only until the first cover art loads and a theme
+        # accent actually exists.
+        self.update(Text("\n".join(rows), style=color or "bold white"))
 
 
 class PlayerInfoBar(Static):
@@ -539,6 +542,7 @@ _KEY_ACTIONS = [
     ("f", "fullscreen"),
     ("c", "collapse"),
     ("m", "minimal"),
+    ("o", "sign out"),
     ("q", "quit"),
 ]
 

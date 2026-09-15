@@ -76,7 +76,7 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
 
     from .ui.app import MusicApp
 
-    app = MusicApp(config, music, player, lyrics, cover_art, session)
+    app = MusicApp(config, music, player, lyrics, cover_art, session, auth_service)
     try:
         await app.run_async()
     finally:

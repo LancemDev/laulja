@@ -41,7 +41,14 @@ def has_auth_cookies(cookies: List[Cookie]) -> bool:
 
 
 def cookies_to_header(cookies: List[Cookie]) -> str:
-    return "; ".join(f"{c.name}={c.value}" for c in cookies)
+    # A cookie jar can hold more than one row for the same identity cookie (e.g. a leftover
+    # from a previous sign-in alongside the current one, or duplicate host-scoped rows that
+    # collapse to the same name here) — sending both confuses which account SAPISIDHASH gets
+    # computed from vs. which one the server actually session-binds to, which is exactly what
+    # showed up as an empty library after switching accounts. Last one in `cookies` wins,
+    # matching create_cookie's/the callers' newest-first ordering.
+    deduped = {c.name: c for c in cookies}
+    return "; ".join(f"{c.name}={c.value}" for c in deduped.values())
 
 
 def parse_header(cookie_header: str) -> List[Cookie]:

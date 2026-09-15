@@ -110,6 +110,11 @@ class AuthService:
                 status_detail=str(ex),
             )
 
+    def sign_out(self) -> None:
+        """Removes locally saved cookies/session so the next launch requires signing in again."""
+        Path(self.cookies_path).unlink(missing_ok=True)
+        Path(self.session_path).unlink(missing_ok=True)
+
     def save_cookies(self, cookies: List[Cookie]) -> AuthSession:
         if not cookies:
             raise ValueError("No cookies were found.")

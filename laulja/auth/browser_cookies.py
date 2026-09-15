@@ -104,8 +104,12 @@ def _read_firefox_cookies(db_path: Path) -> List[Cookie]:
     try:
         conn = sqlite3.connect(f"file:{temp}?mode=ro", uri=True)
         try:
+            # Ordered oldest-to-newest so that when a name collides after domain normalization
+            # (e.g. a leftover row from a previous sign-in), cookies_to_header's last-one-wins
+            # dedup keeps the most recently set value rather than an arbitrary one.
             cur = conn.execute(
-                "SELECT host, name, value, path, isSecure FROM moz_cookies WHERE host LIKE '%youtube.com'"
+                "SELECT host, name, value, path, isSecure FROM moz_cookies "
+                "WHERE host LIKE '%youtube.com' ORDER BY creationTime ASC"
             )
             return [
                 create_cookie(name, value, host, path or "/", bool(is_secure))
@@ -122,9 +126,12 @@ def _read_chrome_cookies(db_path: Path, secret_tool_apps: List[str]) -> List[Coo
     try:
         conn = sqlite3.connect(f"file:{temp}?mode=ro", uri=True)
         try:
+            # Ordered oldest-to-newest so that when a name collides after domain normalization
+            # (e.g. a leftover row from a previous sign-in), cookies_to_header's last-one-wins
+            # dedup keeps the most recently set value rather than an arbitrary one.
             cur = conn.execute(
                 "SELECT host_key, name, path, encrypted_value, is_secure FROM cookies "
-                "WHERE host_key LIKE '%youtube.com'"
+                "WHERE host_key LIKE '%youtube.com' ORDER BY last_update_utc ASC"
             )
             key: Optional[bytes] = None
             cookies: List[Cookie] = []
