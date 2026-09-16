@@ -63,6 +63,7 @@ DevTools.
 
 ```
 Tab        cycle focus between Tracks, Queue, and Playlists
+←/→        switch panel (single-view mode only)
 j/k, ↑/↓   move selection
 Enter      play selected track / playlist / queue item
 Space      play/pause
@@ -72,7 +73,9 @@ x          remove the selected track from the Queue panel
 Esc        back to library from search results
 f          cycle fullscreen: normal → cover+bar → lyrics → normal
 c          collapse the sidebar
+v          toggle single-view sidebar (one panel at a time, default) vs. stacked (all three)
 m          toggle minimalism (strip panel borders and the hint bar)
+o          sign out (clears saved cookies — sign in again next launch)
 q          quit
 ```
 
@@ -81,6 +84,11 @@ it — a continuous queue of similar-vibe songs — rather than just the track a
 playlist queues it in order instead. The Queue panel shows what's playing next: `Enter` jumps
 straight to a track, `x` removes one (the currently-playing track can't be removed this way —
 skip to it instead).
+
+The sidebar starts in **single-view** mode: only the focused panel (Tracks, Queue, or
+Playlists) is shown, filling the sidebar's full height so long lists don't need scrolling —
+`Tab`/`←`/`→` switch between them. Press `v` to switch to the old stacked layout, where all
+three show at once in a fixed height split.
 
 ## Config
 
