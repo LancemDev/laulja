@@ -59,6 +59,15 @@ class AudioPlayerService:
 
     @property
     def position_seconds(self) -> float:
+        # Prefer frames the sink has actually handed to the audio device over frames merely
+        # written to it — the sounddevice backend queues several chunks ahead of playback
+        # (see sink.py's `frames_played`), so counting on write alone runs seconds ahead of
+        # what's actually audible, throwing off anything timed against position (synced lyrics).
+        # Only _SoundDeviceSink exposes this; the CLI-player fallbacks (pw-play/paplay/aplay)
+        # have no such visibility, so fall back to samples handed to their stdin pipe.
+        frames_played = getattr(self._sink, "frames_played", None)
+        if frames_played is not None:
+            return frames_played / SAMPLE_RATE
         return self._samples_written / SAMPLE_RATE
 
     @property

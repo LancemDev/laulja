@@ -18,7 +18,7 @@ from ..services.cover_art_service import CoverArtService
 from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
 from . import art_theme
-from .state import AppState, FullScreenMode, LeftFocus
+from .state import AppState, FullScreenMode, LeftFocus, WallpaperVisual
 from .widgets import (
     BarVisualizerPanel,
     CoverArtPanel,
@@ -29,9 +29,27 @@ from .widgets import (
     QueuePanel,
     QuickActionsBar,
     TracksPanel,
+    WallpaperPanel,
 )
 
 _LEFT_FOCUS_CYCLE = [LeftFocus.TRACKS, LeftFocus.QUEUE, LeftFocus.PLAYLISTS]
+_WALLPAPER_VISUALS = list(WallpaperVisual)
+
+# Applied at startup, before any cover art has loaded to derive a real one (art_theme.py) —
+# Textual's own built-in themes all default `primary` (panel borders, scrollbars) to a shade of
+# blue, which reads as a stock, unthemed placeholder. Warm instead, so the very first screen
+# already looks like part of this app rather than generic Textual chrome.
+_DEFAULT_THEME = Theme(
+    name="laulja-warm",
+    primary="#cc7832",
+    secondary="#8a4b2f",
+    warning="#ffa62b",
+    error="#ba3c5b",
+    success="#4ebf71",
+    accent="#ffa62b",
+    foreground="#e0e0e0",
+    dark=True,
+)
 
 _CSS = """
 Screen {
@@ -133,6 +151,25 @@ Screen.minimal #player-info {
 Screen.minimal #quickactions {
     display: none;
 }
+
+/* Wallpaper mode ("w"): full-screen generative visuals in place of everything else — the
+   sidebar/cover/lyrics/player-info panels aren't just hidden behind it, they're removed from
+   layout entirely so #wallpaper (height: 1fr) fills the whole screen on its own. */
+#wallpaper {
+    display: none;
+    width: 1fr;
+    height: 1fr;
+}
+Screen.wallpaper #header,
+Screen.wallpaper #search-input,
+Screen.wallpaper #body,
+Screen.wallpaper #player,
+Screen.wallpaper #quickactions {
+    display: none;
+}
+Screen.wallpaper #wallpaper {
+    display: block;
+}
 """
 
 
@@ -181,12 +218,16 @@ class MusicApp(App[None]):
             yield PlayerInfoBar(self.state, id="player-info")
             yield ProgressBar(id="player-gauge", total=1000, show_eta=False, show_percentage=False)
         yield QuickActionsBar(self.state, id="quickactions")
+        yield WallpaperPanel(self.state, id="wallpaper")
 
     async def on_mount(self) -> None:
         # Only the search Input should ever hold real focus; everywhere else our own on_key
         # drives selection (j/k/tab/etc.), matching the original's single global input handler.
         self.query_one("#search-input", Input).can_focus = False
         self.set_focus(None)
+
+        self.register_theme(_DEFAULT_THEME)
+        self.theme = _DEFAULT_THEME.name
 
         self._apply_layout()
         self.set_interval(self._config.tick_ms / 1000, self._on_tick)
@@ -254,7 +295,10 @@ class MusicApp(App[None]):
         # spinner actually animates instead of sitting on whatever frame it last happened to
         # render (position/is_playing/now_playing don't change during a plain data fetch).
         still_fetching_details = s.now_playing is not None and (s.lyrics is None or s.cover_art is None)
-        if before != after or s.is_loading_library or still_fetching_details:
+        # Wallpaper visuals are time-driven (see WallpaperPanel) and meant to keep animating even
+        # when playback itself hasn't changed (paused, or nothing loaded yet) — repaint every
+        # tick while it's active rather than only on an actual state change.
+        if before != after or s.is_loading_library or still_fetching_details or s.is_wallpaper_mode:
             self.refresh_all()
 
     def _sync_player_state(self) -> None:
@@ -376,6 +420,17 @@ class MusicApp(App[None]):
         if event.key == "v":
             s.is_sidebar_paged = not s.is_sidebar_paged
             self._apply_layout()
+            self.refresh_all()
+            return
+
+        if event.key == "w":
+            s.is_wallpaper_mode = not s.is_wallpaper_mode
+            self.screen.set_class(s.is_wallpaper_mode, "wallpaper")
+            self.refresh_all()
+            return
+
+        if event.key in ("left", "right") and s.is_wallpaper_mode:
+            self._cycle_wallpaper_visual(1 if event.key == "right" else -1)
             self.refresh_all()
             return
 
@@ -508,6 +563,11 @@ class MusicApp(App[None]):
         i = _LEFT_FOCUS_CYCLE.index(s.left_focus)
         s.left_focus = _LEFT_FOCUS_CYCLE[(i + delta) % len(_LEFT_FOCUS_CYCLE)]
         self._apply_layout()
+
+    def _cycle_wallpaper_visual(self, delta: int) -> None:
+        s = self.state
+        i = _WALLPAPER_VISUALS.index(s.wallpaper_visual)
+        s.wallpaper_visual = _WALLPAPER_VISUALS[(i + delta) % len(_WALLPAPER_VISUALS)]
 
     def _move_selection(self, delta: int) -> None:
         s = self.state
@@ -687,3 +747,8 @@ class MusicApp(App[None]):
         self.query_one(QuickActionsBar).refresh_content()
         self.query_one(PlayerInfoBar).refresh_content(accent=accent)
         self.query_one("#player-gauge", ProgressBar).update(progress=self.state.progress_ratio * 1000)
+
+        # Skipped when inactive — plasma/spectrum in particular do real per-frame work that'd
+        # otherwise run at the full tick rate for a panel nobody can see.
+        if self.state.is_wallpaper_mode:
+            self.query_one(WallpaperPanel).refresh_content(accent=accent)

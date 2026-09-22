@@ -19,6 +19,17 @@ class FullScreenMode(Enum):
     LYRICS = "lyrics"
 
 
+class WallpaperVisual(Enum):
+    """The selectable generative backdrops for wallpaper mode ("w") — cycled with ←/→ while
+    active. SPECTRUM is audio-reactive (it reads AppState.visualizer_levels); the others are
+    purely time-driven so they keep animating even while paused."""
+
+    SPECTRUM = "spectrum"
+    STARFIELD = "starfield"
+    RAIN = "rain"
+    PLASMA = "plasma"
+
+
 @dataclass
 class AppState:
     status_message: str = "Ready"
@@ -41,6 +52,12 @@ class AppState:
     is_sidebar_paged: bool = True
     is_minimal: bool = False
     is_loading_library: bool = True
+
+    # Full-screen ambient visuals ("w") that run behind whatever's currently playing, like a
+    # lofi player's animated backdrop — the sidebar/lyrics/cover panels are hidden entirely
+    # rather than just full-screened, since the point is the visual, not any of that content.
+    is_wallpaper_mode: bool = False
+    wallpaper_visual: WallpaperVisual = WallpaperVisual.SPECTRUM
 
     tracks_selected_index: int = 0
     playlists_selected_index: int = 0

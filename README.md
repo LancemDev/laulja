@@ -75,9 +75,18 @@ f          cycle fullscreen: normal → cover+bar → lyrics → normal
 c          collapse the sidebar
 v          toggle single-view sidebar (one panel at a time, default) vs. stacked (all three)
 m          toggle minimalism (strip panel borders and the hint bar)
+w          wallpaper mode: full-screen ambient visuals, music keeps playing in the background
+             ←/→        cycle visual (spectrum / starfield / rain / plasma) while active
 o          sign out (clears saved cookies — sign in again next launch)
 q          quit
 ```
+
+**Wallpaper mode** (`w`) swaps the whole screen for a generative, lofi-style visual — audio
+keeps playing exactly as before, just without any of the normal panels on screen. Pick from
+four visuals with `←`/`→`: `spectrum` (mirrored bars driven by the real audio spectrum),
+`starfield`, `rain`, and `plasma` (a chunky, retro color field) — the latter three animate on
+their own even while paused. Playback controls (`space`, `n`/`p`, `l`) still work while it's
+active; `w` again returns to the normal layout.
 
 Playing an individual track (library or search) starts a YouTube Music radio/mix seeded from
 it — a continuous queue of similar-vibe songs — rather than just the track alone; playing a

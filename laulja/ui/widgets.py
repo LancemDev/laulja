@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import colorsys
 import io
+import math
 import os
+import random
 import textwrap
 import time
 from datetime import timedelta
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import pyfiglet
 from PIL import Image as PILImage
@@ -25,7 +28,7 @@ from textual_image.widget import SixelImage as _SixelCoverImage
 CoverImage = _SixelCoverImage if os.environ.get("KONSOLE_VERSION") else _AutoCoverImage
 
 from .listing import ListPanel
-from .state import AppState, LeftFocus
+from .state import AppState, LeftFocus, WallpaperVisual
 
 """Panel widgets — the Python/Textual equivalents of UI/Widgets/*.cs. Each widget holds a
 reference to the shared AppState and repaints itself on demand via refresh_content(),
@@ -51,6 +54,12 @@ def _spinner() -> str:
 # too-wide *line* at word boundaries fine, but tears a too-wide single *word* across rows
 # mid-letter instead, which is unreadable — so "small" (narrower) is the fallback for that.
 _BIG_TEXT_FONTS = ["big", "small"]
+
+# How many lyric lines to show above/below the currently-playing one, each shrunk to a single
+# plain-text row and progressively dimmed — a terminal-cell stand-in for the "lines recede into
+# depth" look (real scale/blur isn't something a character grid can do), capped so it still fits
+# comfortably alongside the big current-line block on a normal-height lyrics panel.
+_LYRICS_CONTEXT_LINES = 2
 
 
 def _figlet_word_width(word: str, font: str) -> int:
@@ -97,6 +106,46 @@ def _big_text_rows(text: str, width: int, font: Optional[str]) -> list[str]:
     # Not even the narrowest big font's letters fit every word of this song — give up on
     # block-letter art and just wrap plain text, which stays legible at any width.
     return textwrap.wrap(text, width) or [text]
+
+
+def _ellipsize(text: str, width: int) -> str:
+    """Truncates `text` to `width` columns with a trailing ellipsis instead of letting it wrap —
+    context lyric rows are meant to be exactly one row tall each (see LyricsPanel), and the panel
+    itself has word-wrap CSS on for the plain-lyrics fallback, so an over-long context line would
+    otherwise spill onto an extra row and throw off the fixed row-count layout."""
+    text = text or ""
+    width = max(1, width)
+    if len(text) <= width:
+        return text
+    if width == 1:
+        return text[:1]
+    return text[: width - 1].rstrip() + "…"
+
+
+def _fade_hex(hex_color: Optional[str], amount: float) -> str:
+    """Blends `hex_color` toward neutral grey by `amount` (0 = full color, 1 = grey) — the
+    terminal stand-in for the reference effect's opacity/blur falloff, since a cell grid can't
+    do real alpha blending. Used to dim lyric lines further from the one currently playing."""
+    base = hex_color or "#ffa62b"
+    try:
+        r, g, b = (int(base[i : i + 2], 16) for i in (1, 3, 5))
+    except Exception:
+        r, g, b = (0xFF, 0xA6, 0x2B)
+    amount = max(0.0, min(1.0, amount))
+    r = round(r + (0x80 - r) * amount)
+    g = round(g + (0x80 - g) * amount)
+    b = round(b + (0x80 - b) * amount)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _figlet_group_height(font: Optional[str], width: int) -> int:
+    """Row-height of a single pyfiglet word-wrapped group in `font` at `width` columns — a short
+    probe word is guaranteed to render as exactly one such group, so this gives the fixed "one
+    tier of big text" height regardless of how many groups any particular lyric line's own
+    length happens to wrap into."""
+    if font is None:
+        return 1
+    return max(1, len(_big_text_rows("I", width, font)))
 
 
 def _format_short_duration(d: Optional[timedelta]) -> str:
@@ -239,6 +288,7 @@ class LyricsPanel(ListPanel):
         self._rendered_key: Optional[tuple] = None
         self._font_key: Optional[tuple] = None
         self._big_font: Optional[str] = None
+        self._big_block_height: int = 1
 
     def refresh_content(self, accent: Optional[str] = None) -> None:
         self.border_title = "Lyrics"
@@ -274,38 +324,80 @@ class LyricsPanel(ListPanel):
         self._rendered_key = key
 
         # Pick the block-letter font once per song (per panel width) from every line's words,
-        # rather than per rendered line — so the active line never jumps fonts as playback
-        # moves from a line with short words to one with a longer word.
+        # rather than per rendered line — so the active line never jumps fonts as playback moves
+        # from a line with short words to one with a longer word. The reserved block height for
+        # the current-line tier is capped at two word-wrapped groups' worth of rows (a fixed
+        # function of the font+width, not of any particular line's length): sizing it off the
+        # single longest lyric line in the song instead would mean one outlier line — most songs
+        # have at least one — reserves a towering slot that every short line then pads out to,
+        # which is exactly the "hops around"/inconsistent feel this is meant to fix.
         font_key = (id(lyrics), cols)
         if font_key != self._font_key:
             words = [w for line in lyrics.lines for w in (line.text or "").upper().split()]
             self._big_font = _pick_big_font(words, cols)
+            self._big_block_height = _figlet_group_height(self._big_font, cols) * 2 if self._big_font else 3
             self._font_key = font_key
 
-        # Only the line being sung right now — not the lines around it — but rendered as big
-        # block-letter text (word-wrapped to the panel width) instead of plain bold color, since
-        # a terminal can't scale font size the way the reference video's caption does.
-        line_text = (lyrics.lines[active].text or " ").upper()
-        block_rows = _big_text_rows(line_text, cols, self._big_font)
-        pad = max(0, (height - len(block_rows)) // 2)
-
         # Colored with the current art-derived theme's accent (art_theme.py), same as the
-        # now-playing bar's fill — falls back to a fixed color only until the first cover art
-        # loads and a theme accent actually exists.
-        line_style = f"bold {accent}" if accent else "bold cyan1"
+        # now-playing bar's fill — falls back to a fixed warm color only if the app's theme
+        # lookup itself ever comes back empty (the default theme set at startup normally means
+        # an accent is always available well before any cover art loads).
+        current_style = f"bold {accent}" if accent else "bold #ffa62b"
+        block_height = min(self._big_block_height, height)
+
+        # The line being sung right now, rendered as big block-letter text (word-wrapped to the
+        # panel width) inside a fixed-height slot — a terminal can't scale font size the way the
+        # reference video's caption does, so size is faked with this one oversized tier. A line
+        # too long to fit the reserved slot even wrapped (an outlier next to the rest of the
+        # song) falls back to plain bold text for just that line, rather than blowing past the
+        # slot and dragging every other line's layout back out of sync with it.
+        active_text = lyrics.lines[active].text or " "
+        block_rows = _big_text_rows(active_text.upper(), cols, self._big_font)
+        if len(block_rows) > block_height:
+            block_rows = (textwrap.wrap(active_text, cols) or [active_text])[:block_height]
+        block_pad_before = max(0, (block_height - len(block_rows)) // 2)
+        block_pad_after = max(0, block_height - len(block_rows) - block_pad_before)
+
+        # Lines around the current one, shown as plain single-row text that shrinks in visual
+        # weight (bold → dim) and fades toward grey the further they are from the current line —
+        # the terminal stand-in for the reference effect's shrink/blur/fade-with-distance, so the
+        # stack reads as receding into depth rather than the current line just floating alone.
+        context_budget = max(0, (height - block_height) // 2)
+        context_n = max(0, min(_LYRICS_CONTEXT_LINES, context_budget))
+        outer_pad = max(0, (height - block_height - context_n * 2) // 2)
+
+        def context_row(offset: int) -> tuple[str, str]:
+            idx = active + offset
+            text = lyrics.lines[idx].text if 0 <= idx < len(lyrics.lines) else ""
+            fade = 0.35 if abs(offset) == 1 else 0.65
+            color = _fade_hex(accent, fade)
+            weight = "bold" if abs(offset) == 1 else "dim"
+            return _ellipsize(text, cols), f"{weight} {color}"
 
         text = Text(justify="center")
-        if pad:
-            text.append("\n" * pad)
+        if outer_pad:
+            text.append("\n" * outer_pad)
+        for offset in range(-context_n, 0):
+            row, style = context_row(offset)
+            text.append(row, style=style)
+            text.append("\n")
+        if block_pad_before:
+            text.append("\n" * block_pad_before)
         for i, row in enumerate(block_rows):
             if i:
                 text.append("\n")
-            text.append(row, style=line_style)
-        if pad:
-            text.append("\n" * pad)
+            text.append(row, style=current_style)
+        if block_pad_after:
+            text.append("\n" * block_pad_after)
+        for offset in range(1, context_n + 1):
+            row, style = context_row(offset)
+            text.append("\n")
+            text.append(row, style=style)
+        if outer_pad:
+            text.append("\n" * outer_pad)
 
-        center_index = pad + len(block_rows) // 2
-        total_rows = pad + len(block_rows) + pad
+        center_index = outer_pad + context_n + block_pad_before + len(block_rows) // 2
+        total_rows = outer_pad + context_n + block_height + context_n + outer_pad
         self.set_lines(text, center_index, total_rows, center=True, animate=True)
 
     def _current_line_index(self, lyrics) -> Optional[int]:
@@ -531,6 +623,256 @@ class PlayerInfoBar(Static):
         self.update(display)
 
 
+def _accent_hue(accent: Optional[str]) -> float:
+    """The accent color's hue (0..1), so a visual's generated palette rotates around whatever
+    the current art-derived theme actually is instead of a hardcoded color — falls back to the
+    app's own default warm amber (see app.py's _DEFAULT_THEME) before any theme accent exists."""
+    if accent:
+        try:
+            r, g, b = (int(accent[i : i + 2], 16) / 255 for i in (1, 3, 5))
+            return colorsys.rgb_to_hsv(r, g, b)[0]
+        except Exception:
+            pass
+    return 0.09
+
+
+def _hsv_hex(h: float, s: float, v: float) -> str:
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
+    return "#{:02x}{:02x}{:02x}".format(round(r * 255), round(g * 255), round(b * 255))
+
+
+# (start_col, end_col, style) — one row's worth of colored spans over an otherwise-plain string.
+_RowSpans = List[Tuple[int, int, str]]
+
+_PLASMA_GRID_W = 40
+_PLASMA_GRID_H = 18
+_RAIN_CHARS = "|:.`"
+
+
+class WallpaperPanel(Static):
+    """Full-screen ambient visuals ("w") meant to run behind whatever's playing, like a lofi
+    player's animated backdrop — playback itself is untouched (AudioPlayerService keeps going
+    regardless of what's on screen), this just swaps the whole UI for one of a few generative
+    visuals instead of the normal panels. Cycled with ←/→ (state.wallpaper_visual).
+
+    Each visual is computed as plain character rows plus per-row color spans rather than
+    building a Rich Text cell-by-cell — a naive `Text.append` per character is easily tens of
+    thousands of calls a frame at full-screen size, which doesn't hold up at the ~20fps the
+    player's own tick loop repaints this at. Spans are cheap because most of a frame is either
+    blank (starfield/rain) or made of same-colored runs (plasma's upscaled blocks)."""
+
+    def __init__(self, state: AppState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+        self._star_key: Optional[tuple] = None
+        self._stars: list[tuple[float, float, float, float]] = []
+        self._rain_key: Optional[int] = None
+        self._rain_columns: list[tuple[float, float, int]] = []
+
+    def refresh_content(self, accent: Optional[str] = None) -> None:
+        s = self.state
+        cols = max(1, int(self.size.width))
+        rows = max(1, int(self.size.height))
+        t = time.monotonic()
+
+        renderers = {
+            WallpaperVisual.SPECTRUM: self._render_spectrum,
+            WallpaperVisual.STARFIELD: self._render_starfield,
+            WallpaperVisual.RAIN: self._render_rain,
+            WallpaperVisual.PLASMA: self._render_plasma,
+        }
+        row_strings, row_spans = renderers[s.wallpaper_visual](cols, rows, t, accent)
+        row_strings = list(row_strings)
+        row_spans = [list(spans) for spans in row_spans]
+        self._overlay_now_playing(row_strings, row_spans, cols, rows)
+        self.update(self._compose_frame(row_strings, row_spans))
+
+    @staticmethod
+    def _compose_frame(row_strings: list[str], row_spans: list[_RowSpans]) -> Text:
+        text = Text()
+        for i, (row, spans) in enumerate(zip(row_strings, row_spans)):
+            if i:
+                text.append("\n")
+            line = Text(row)
+            for start, end, style in spans:
+                line.stylize(style, start, end)
+            text.append(line)
+        return text
+
+    def _overlay_now_playing(
+        self, row_strings: list[str], row_spans: list[_RowSpans], cols: int, rows: int
+    ) -> None:
+        """Replaces the last couple of rows with a caption — title/artist, position, and the
+        exit/cycle hint — rather than drawing it on top of the visual, so it always stays legible
+        regardless of what's happening behind it."""
+        s = self.state
+        if s.now_playing:
+            lines = [
+                f"♪ {s.now_playing.title} — {s.now_playing.artist}",
+                f"{_format_seconds(s.position_seconds)} / {_format_seconds(s.duration_seconds)}",
+            ]
+        else:
+            lines = ["Wallpaper mode", "Nothing playing — pick a track after pressing w again"]
+        lines.append(f"w exit  ·  ←/→ visual: {s.wallpaper_visual.value}  ·  space pause")
+        styles = ["bold white", "white", "dim"]
+
+        start = max(0, rows - len(lines) - 1)
+        for offset, (line, style) in enumerate(zip(lines, styles)):
+            r = start + offset
+            if not (0 <= r < rows):
+                continue
+            row_strings[r] = line[:cols].center(cols)
+            row_spans[r] = [(0, cols, style)]
+
+    # -- visuals -----------------------------------------------------------------------------
+
+    def _render_spectrum(
+        self, cols: int, rows: int, t: float, accent: Optional[str]
+    ) -> tuple[list[str], list[_RowSpans]]:
+        """Wide, mirrored equalizer bars driven by the real audio spectrum (AppState's own
+        visualizer_levels — the same data BarVisualizerPanel uses, just spread full-screen and
+        rainbow-shifted around the theme accent). Idles with a gentle breathing wave instead of
+        flatlining while paused or before playback starts."""
+        s = self.state
+        levels = s.visualizer_levels
+        n = len(levels)
+        base_hue = _accent_hue(accent)
+        mid = rows / 2.0
+
+        grid = [[" "] * cols for _ in range(rows)]
+        spans: list[_RowSpans] = [[] for _ in range(rows)]
+
+        for col in range(cols):
+            if n and s.is_playing:
+                level = levels[min(n - 1, col * n // cols)]
+            else:
+                level = (math.sin(t * 1.4 + col * 0.18) * 0.5 + 0.5) * 22
+            half_height = int(level / 100 * mid)
+            if half_height <= 0:
+                continue
+            color = _hsv_hex(base_hue + col / cols * 0.5, 0.65, 0.95)
+            for h in range(half_height):
+                for r in (int(mid) - 1 - h, int(mid) + h):
+                    if 0 <= r < rows:
+                        grid[r][col] = "█"
+                        spans[r].append((col, col + 1, color))
+
+        return ["".join(row) for row in grid], spans
+
+    def _ensure_stars(self, cols: int, rows: int) -> None:
+        key = (cols, rows)
+        if key == self._star_key:
+            return
+        rng = random.Random(cols * 10_000 + rows)
+        count = max(12, (cols * rows) // 45)
+        self._stars = [
+            (rng.uniform(0, cols), rng.uniform(0, rows), rng.uniform(1.5, 5.0), rng.uniform(0, math.tau))
+            for _ in range(count)
+        ]
+        self._star_key = key
+
+    def _render_starfield(
+        self, cols: int, rows: int, t: float, accent: Optional[str]
+    ) -> tuple[list[str], list[_RowSpans]]:
+        """Slow-drifting, twinkling stars — a classic screensaver, purely time-driven so it stays
+        alive even while playback is paused."""
+        self._ensure_stars(cols, rows)
+        grid = [[" "] * cols for _ in range(rows)]
+        spans: list[_RowSpans] = [[] for _ in range(rows)]
+
+        for x, y0, speed, phase in self._stars:
+            y = int((y0 + t * speed * 0.4) % rows)
+            x_i = int(x) % cols
+            twinkle = math.sin(t * 2 + phase)
+            if twinkle > 0.6:
+                char, style = "*", f"bold {accent}" if accent else "bold white"
+            elif twinkle > -0.2:
+                char, style = "+", "grey70"
+            else:
+                char, style = ".", "grey42"
+            grid[y][x_i] = char
+            spans[y].append((x_i, x_i + 1, style))
+
+        return ["".join(row) for row in grid], spans
+
+    def _ensure_rain(self, cols: int) -> None:
+        if cols == self._rain_key:
+            return
+        rng = random.Random(cols)
+        self._rain_columns = [
+            (rng.uniform(0, 1000), rng.uniform(6.0, 14.0), rng.randint(3, len(_RAIN_CHARS) + 2))
+            for _ in range(cols)
+        ]
+        self._rain_key = cols
+
+    def _render_rain(
+        self, cols: int, rows: int, t: float, accent: Optional[str]
+    ) -> tuple[list[str], list[_RowSpans]]:
+        """Sparse falling character streams, muted/tinted with the theme accent rather than the
+        usual matrix green — a quieter, lofi-appropriate rain instead of a hacker-movie effect."""
+        self._ensure_rain(cols)
+        grid = [[" "] * cols for _ in range(rows)]
+        spans: list[_RowSpans] = [[] for _ in range(rows)]
+
+        for col, (offset, speed, length) in enumerate(self._rain_columns):
+            head = (offset + t * speed) % (rows + length)
+            for i in range(length):
+                y = int(head) - i
+                if not (0 <= y < rows):
+                    continue
+                grid[y][col] = _RAIN_CHARS[min(i, len(_RAIN_CHARS) - 1)]
+                if i == 0:
+                    style = f"bold {accent}" if accent else "bold white"
+                elif i < length / 2:
+                    style = "grey70"
+                else:
+                    style = "grey35"
+                spans[y].append((col, col + 1, style))
+
+        return ["".join(row) for row in grid], spans
+
+    def _render_plasma(
+        self, cols: int, rows: int, t: float, accent: Optional[str]
+    ) -> tuple[list[str], list[_RowSpans]]:
+        """Chunky, retro demoscene-style plasma — computed on a small fixed grid and upscaled
+        with block characters (nearest-neighbor) rather than one color per terminal cell, both to
+        keep the per-frame trig/HSV cost independent of the actual terminal size and because the
+        pixelated look reads as more "lofi" than a smooth gradient would anyway."""
+        base_hue = _accent_hue(accent)
+        gw, gh = min(_PLASMA_GRID_W, cols), min(_PLASMA_GRID_H, rows)
+
+        cell_colors = [[""] * gw for _ in range(gh)]
+        for gy in range(gh):
+            for gx in range(gw):
+                v = (
+                    math.sin(gx * 0.35 + t * 0.8)
+                    + math.sin(gy * 0.5 + t * 0.6)
+                    + math.sin((gx + gy) * 0.25 + t)
+                    + math.sin(math.hypot(gx - gw / 2, gy - gh / 2) * 0.3 - t * 1.2)
+                ) / 4.0
+                hue = base_hue + (v + 1) / 2 * 0.35
+                value = 0.5 + (v + 1) / 2 * 0.4
+                cell_colors[gy][gx] = _hsv_hex(hue, 0.7, value)
+
+        row_strings = []
+        row_spans: list[_RowSpans] = []
+        for row in range(rows):
+            gy = min(gh - 1, row * gh // rows)
+            spans: _RowSpans = []
+            run_start = 0
+            run_color = cell_colors[gy][0]
+            for col in range(1, cols):
+                color = cell_colors[gy][min(gw - 1, col * gw // cols)]
+                if color != run_color:
+                    spans.append((run_start, col, run_color))
+                    run_start, run_color = col, color
+            spans.append((run_start, cols, run_color))
+            row_strings.append("█" * cols)
+            row_spans.append(spans)
+
+        return row_strings, row_spans
+
+
 _KEY_ACTIONS = [
     ("Tab", "focus"),
     ("j/k", "move"),
@@ -543,6 +885,7 @@ _KEY_ACTIONS = [
     ("c", "collapse"),
     ("v", "single view"),
     ("m", "minimal"),
+    ("w", "wallpaper"),
     ("o", "sign out"),
     ("q", "quit"),
 ]

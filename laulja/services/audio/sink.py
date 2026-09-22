@@ -80,6 +80,13 @@ class _SoundDeviceSink:
         self._stream.start()
         self._queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=_CHUNK_QUEUE_DEPTH)
         self._stopped = threading.Event()
+        self._bytes_per_frame = channels * 2  # dtype="int16"
+        # Frames actually handed to PortAudio (i.e. audible "now"), not merely queued for it —
+        # `_queue` alone can hold up to _CHUNK_QUEUE_DEPTH chunks (~3s) of not-yet-played audio,
+        # so a position derived from queued-instead-of-played frames runs seconds ahead of what's
+        # actually heard, which throws off anything timed against playback position (e.g. synced
+        # lyrics). Read from player.py's position_seconds via getattr, main thread only.
+        self.frames_played = 0
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
         self.stdin = self  # write()/flush()/close() below double as the "stdin" pipe
@@ -122,6 +129,7 @@ class _SoundDeviceSink:
                     break
                 try:
                     self._stream.write(chunk)
+                    self.frames_played += len(chunk) // self._bytes_per_frame
                 except Exception:
                     break
         finally:
