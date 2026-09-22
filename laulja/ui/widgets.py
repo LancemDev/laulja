@@ -358,10 +358,11 @@ class LyricsPanel(ListPanel):
         block_pad_before = max(0, (block_height - len(block_rows)) // 2)
         block_pad_after = max(0, block_height - len(block_rows) - block_pad_before)
 
-        # Lines around the current one, shown as plain single-row text that shrinks in visual
-        # weight (bold → dim) and fades toward grey the further they are from the current line —
-        # the terminal stand-in for the reference effect's shrink/blur/fade-with-distance, so the
-        # stack reads as receding into depth rather than the current line just floating alone.
+        # Lines around the current one, shown as plain single-row text that fades toward grey the
+        # further they are from the current line — the terminal stand-in for the reference
+        # effect's shrink/blur/fade-with-distance. None of these are ever bold: bold is reserved
+        # for the one current line (see current_style above), so it's unambiguous which single
+        # line is actually playing instead of the nearest neighbor reading as highlighted too.
         context_budget = max(0, (height - block_height) // 2)
         context_n = max(0, min(_LYRICS_CONTEXT_LINES, context_budget))
         outer_pad = max(0, (height - block_height - context_n * 2) // 2)
@@ -371,8 +372,8 @@ class LyricsPanel(ListPanel):
             text = lyrics.lines[idx].text if 0 <= idx < len(lyrics.lines) else ""
             fade = 0.35 if abs(offset) == 1 else 0.65
             color = _fade_hex(accent, fade)
-            weight = "bold" if abs(offset) == 1 else "dim"
-            return _ellipsize(text, cols), f"{weight} {color}"
+            weight = "" if abs(offset) == 1 else "dim"
+            return _ellipsize(text, cols), f"{weight} {color}".strip()
 
         text = Text(justify="center")
         if outer_pad:
