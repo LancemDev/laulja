@@ -110,6 +110,18 @@ class _SoundDeviceSink:
             self._stopped.set()
 
     # -- Popen-shaped surface, used by player.py's teardown path -----------------------------
+    def clear_pending(self) -> None:
+        """Drops chunks already queued for playback but not yet handed to the device — called on
+        pause. `_queue` normally sits close to full during playback (player.py's pump writes as
+        fast as `write()` accepts), so without this, pausing only stops *new* audio from being
+        queued while up to `_CHUNK_QUEUE_DEPTH` chunks (~3s) already sitting in the queue keep
+        right on playing before the device actually goes quiet."""
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+
     def kill(self) -> None:
         # Abrupt stop (track skip/app exit): don't wait for the queue to drain.
         self._stopped.set()

@@ -69,6 +69,15 @@ class AppState:
     playlist_search_results: List[Playlist] = field(default_factory=list)
     queue: List[Track] = field(default_factory=list)
 
+    # Set when a playlist (or the synthetic "Liked Songs" one — see app.py's
+    # LIKED_SONGS_PLAYLIST_ID) has been opened for browsing via Enter, mirroring YT Music's own
+    # "open the playlist page" behavior instead of queuing + playing it immediately. None means
+    # the Playlists panel is still showing the list of playlists rather than one playlist's
+    # tracks.
+    viewing_playlist: Optional[Playlist] = None
+    playlist_view_tracks: List[Track] = field(default_factory=list)
+    playlist_view_selected_index: int = 0
+
     now_playing: Optional[Track] = None
     is_playing: bool = False
     position_seconds: float = 0.0

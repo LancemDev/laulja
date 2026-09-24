@@ -12,7 +12,7 @@ from textual.widgets import Input, ProgressBar
 from ..auth.service import AuthService
 from ..auth.session import AuthSession
 from ..config import AppConfig
-from ..models import Track
+from ..models import Playlist, Track
 from ..services.audio.player import AudioPlayerService
 from ..services.cover_art_service import CoverArtService
 from ..services.lyrics_service import LyricsService
@@ -34,6 +34,11 @@ from .widgets import (
 
 _LEFT_FOCUS_CYCLE = [LeftFocus.TRACKS, LeftFocus.QUEUE, LeftFocus.PLAYLISTS]
 _WALLPAPER_VISUALS = list(WallpaperVisual)
+
+# ytmusicapi's own convention for "the current account's Liked Songs" — get_playlist(id) accepts
+# it exactly like any real playlist id, so it can be faked as one Playlist entry at the top of
+# the Playlists panel rather than needing a separate liked-songs browsing path.
+LIKED_SONGS_PLAYLIST_ID = "LM"
 
 # Applied at startup, before any cover art has loaded to derive a real one (art_theme.py) —
 # Textual's own built-in themes all default `primary` (panel borders, scrollbars) to a shade of
@@ -259,14 +264,20 @@ class MusicApp(App[None]):
         else:
             s.library_tracks = tracks
 
+        if not isinstance(liked_ids, BaseException):
+            s.liked_track_ids = liked_ids
+
         if isinstance(playlists, BaseException):
             if not isinstance(tracks, BaseException):
                 s.status_message = f"Couldn't load playlists: {playlists}"
         else:
-            s.playlists = playlists
-
-        if not isinstance(liked_ids, BaseException):
-            s.liked_track_ids = liked_ids
+            # "Liked Songs" behaves like any other playlist in YT Music (browsable, playable in
+            # order) but isn't itself returned by get_library_playlists() — synthesize an entry
+            # for it, seeded from the liked-song count already fetched above, so it shows up
+            # first without a separate round-trip just to get its track count.
+            liked_count = len(liked_ids) if not isinstance(liked_ids, BaseException) else 0
+            liked_playlist = Playlist(id=LIKED_SONGS_PLAYLIST_ID, title="Liked Songs", track_count=liked_count)
+            s.playlists = [liked_playlist, *playlists]
 
         if not isinstance(tracks, BaseException) and not isinstance(playlists, BaseException):
             s.status_message = (
@@ -387,6 +398,11 @@ class MusicApp(App[None]):
             return
 
         if event.key == "escape":
+            if s.viewing_playlist is not None:
+                self._close_playlist_view()
+                s.status_message = "Back to playlists"
+                self.refresh_all()
+                return
             if s.is_showing_search_results or s.is_showing_playlist_search_results:
                 s.is_showing_search_results = False
                 s.is_showing_playlist_search_results = False
@@ -397,6 +413,10 @@ class MusicApp(App[None]):
             return
 
         if event.key == "slash":
+            # Search targets the *list* of playlists, not one playlist's tracks — back out of
+            # browsing first so the results land somewhere that's actually visible.
+            if s.left_focus == LeftFocus.PLAYLISTS and s.viewing_playlist is not None:
+                self._close_playlist_view()
             s.is_searching = True
             # Search whichever list is focused — Queue counts as Tracks, since there's no such
             # thing as "searching the queue".
@@ -487,7 +507,10 @@ class MusicApp(App[None]):
             return
 
         if event.key == "enter":
-            self._launch(self._play_selection(), loading="Loading…")
+            if s.left_focus == LeftFocus.PLAYLISTS and s.viewing_playlist is None:
+                self._launch(self._open_playlist(), loading="Loading playlist…")
+            else:
+                self._launch(self._play_selection(), loading="Loading…")
             return
 
         if event.key == "l":
@@ -577,6 +600,12 @@ class MusicApp(App[None]):
                 return
             s.tracks_selected_index = max(0, min(s.tracks_selected_index + delta, count - 1))
         elif s.left_focus == LeftFocus.PLAYLISTS:
+            if s.viewing_playlist is not None:
+                count = len(s.playlist_view_tracks)
+                if count == 0:
+                    return
+                s.playlist_view_selected_index = max(0, min(s.playlist_view_selected_index + delta, count - 1))
+                return
             count = len(s.displayed_playlists)
             if count == 0:
                 return
@@ -605,25 +634,44 @@ class MusicApp(App[None]):
 
         asyncio.ensure_future(run())
 
+    async def _open_playlist(self) -> None:
+        """Enter on a playlist opens it for browsing — like clicking into a playlist's page in
+        YT Music itself — rather than immediately queuing + playing it; playback only starts
+        once you actually pick a track inside it (see _play_selection's PLAYLISTS branch)."""
+        s = self.state
+        if not s.displayed_playlists:
+            s.status_message = "No playlists"
+            return
+
+        playlist = s.displayed_playlists[s.playlists_selected_index]
+        try:
+            tracks = await self._music.get_playlist_tracks(playlist.id)
+        except Exception as ex:
+            s.status_message = f"Couldn't open playlist: {ex}"
+            return
+
+        s.viewing_playlist = playlist
+        s.playlist_view_tracks = tracks
+        s.playlist_view_selected_index = 0
+        s.status_message = f"{len(tracks)} track(s)" if tracks else "Playlist is empty"
+
+    def _close_playlist_view(self) -> None:
+        s = self.state
+        s.viewing_playlist = None
+        s.playlist_view_tracks = []
+        s.playlist_view_selected_index = 0
+
     async def _play_selection(self) -> None:
         s = self.state
         if s.left_focus == LeftFocus.PLAYLISTS:
-            if not s.displayed_playlists:
-                s.status_message = "No playlists"
-                return
-
-            playlist = s.displayed_playlists[s.playlists_selected_index]
-            try:
-                tracks = await self._music.get_playlist_tracks(playlist.id)
-            except Exception as ex:
-                s.status_message = f"Couldn't load playlist: {ex}"
-                return
-
-            if not tracks:
+            # Only reached once a playlist is already open (see on_key's "enter" dispatch) —
+            # picking a track here plays the *whole* playlist in order, starting at that track,
+            # same as playing a playlist has always queued it (just entered a different way now).
+            if not s.playlist_view_tracks:
                 s.status_message = "Playlist has no tracks"
                 return
 
-            await self._player.play_queue(tracks, 0)
+            await self._player.play_queue(s.playlist_view_tracks, s.playlist_view_selected_index)
         elif s.left_focus == LeftFocus.QUEUE:
             if not s.queue:
                 s.status_message = "Queue is empty"

@@ -127,6 +127,13 @@ class AudioPlayerService:
         if self.current is None:
             return
         self._is_playing = not self._is_playing
+        if not self._is_playing:
+            # Only _SoundDeviceSink queues audio this deeply ahead of the device (see
+            # sink.py's clear_pending) — the CLI-player fallbacks have no equivalent backlog to
+            # drop, so this is a no-op for them via getattr rather than an isinstance check.
+            clear_pending = getattr(self._sink, "clear_pending", None)
+            if clear_pending is not None:
+                clear_pending()
 
     async def next_track(self) -> None:
         async with self._action_lock:

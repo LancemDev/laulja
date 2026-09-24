@@ -65,12 +65,13 @@ DevTools.
 Tab        cycle focus between Tracks, Queue, and Playlists
 ←/→        switch panel (single-view mode only)
 j/k, ↑/↓   move selection
-Enter      play selected track / playlist / queue item
+Enter      play selected track / queue item · open selected playlist · play a track inside it
 Space      play/pause
 n / p      next / previous track
+l          like / unlike the track that's playing
 x          remove the selected track from the Queue panel
 /          search — Tracks or Playlists, whichever panel is focused (Esc cancels, Enter runs it)
-Esc        back to library from search results
+Esc        back to library from search results · back out of an opened playlist
 f          cycle fullscreen: normal → cover+bar → lyrics → normal
 c          collapse the sidebar
 v          toggle single-view sidebar (one panel at a time, default) vs. stacked (all three)
@@ -89,10 +90,20 @@ their own even while paused. Playback controls (`space`, `n`/`p`, `l`) still wor
 active; `w` again returns to the normal layout.
 
 Playing an individual track (library or search) starts a YouTube Music radio/mix seeded from
-it — a continuous queue of similar-vibe songs — rather than just the track alone; playing a
-playlist queues it in order instead. The Queue panel shows what's playing next: `Enter` jumps
-straight to a track, `x` removes one (the currently-playing track can't be removed this way —
-skip to it instead).
+it — a continuous queue of similar-vibe songs — rather than just the track alone. A playlist
+works differently: `Enter` on one *opens* it (its tracks replace the playlist list in the same
+panel) rather than playing it outright, same as clicking into a playlist's page in YT Music
+itself — `Enter` on a track inside it then plays the whole playlist in order, starting there;
+`Esc` goes back to the playlist list. **Liked Songs** shows up as the first entry, browsable the
+same way. The Queue panel shows what's playing next: `Enter` jumps straight to a track, `x`
+removes one (the currently-playing track can't be removed this way — skip to it instead).
+
+**Lyrics** (synced via LRCLIB) show the line being sung as big block letters in a fixed-height
+slot, so it doesn't jump around as line lengths change (a line too long to fit falls back to
+plain bold text). The lines just before and after it appear above and below, fading toward grey
+with distance — a terminal can't scale or blur text, so depth is faked with dimming. Colors
+(panel borders, lyrics, progress bar, visualizer) are derived from the current track's cover
+art. Pausing takes effect immediately.
 
 The sidebar starts in **single-view** mode: only the focused panel (Tracks, Queue, or
 Playlists) is shown, filling the sidebar's full height so long lists don't need scrolling —
@@ -134,9 +145,12 @@ laulja/
   services/
     music_service.py       ytmusicapi + yt-dlp wrapper
     lyrics_service.py       LRCLIB client
+    cover_art_service.py    thumbnail fetching
     audio/                  ffmpeg pipeline, audio sink, FFT bar visualizer
   ui/
     app.py                  Textual App: layout, keybindings, state sync
     state.py                shared AppState
-    widgets.py              header/tracks/playlists/cover/bar/lyrics panels
+    widgets.py              header/tracks/playlists/queue/cover/bar/lyrics/wallpaper panels
+    listing.py              scrollable list panel base class
+    art_theme.py            derives the UI color theme from cover art
 ```

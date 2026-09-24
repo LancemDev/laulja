@@ -218,6 +218,10 @@ class PlaylistsPanel(ListPanel):
 
     def refresh_content(self) -> None:
         s = self.state
+        if s.viewing_playlist is not None:
+            self._refresh_viewing_playlist()
+            return
+
         title = (
             f"Search: /{s.search_query}█"
             if s.is_searching and s.search_target == LeftFocus.PLAYLISTS
@@ -246,6 +250,32 @@ class PlaylistsPanel(ListPanel):
             text.append(line, style=style)
 
         self.set_lines(text, s.playlists_selected_index, len(playlists))
+
+    def _refresh_viewing_playlist(self) -> None:
+        """Enter on a playlist opens it here — its tracks in place of the playlist list, same
+        panel — rather than queuing + playing it immediately; Esc goes back to the list."""
+        s = self.state
+        playlist = s.viewing_playlist
+        title = f"{playlist.title} · Esc: back"
+        if s.left_focus == LeftFocus.PLAYLISTS:
+            title = f"▶ {title}"
+        self.border_title = title
+
+        tracks = s.playlist_view_tracks
+        if not tracks:
+            self.set_lines("Playlist is empty.", None, 0)
+            return
+
+        text = Text()
+        for i, t in enumerate(tracks):
+            marker = "♪ " if s.now_playing and s.now_playing.id == t.id else "  "
+            line = f"{marker}{t.title}  ·  {t.artist}  [{_format_short_duration(t.duration)}]"
+            style = "reverse" if i == s.playlist_view_selected_index else ""
+            if i:
+                text.append("\n")
+            text.append(line, style=style)
+
+        self.set_lines(text, s.playlist_view_selected_index, len(tracks))
 
 
 class QueuePanel(ListPanel):
@@ -900,6 +930,10 @@ _QUEUE_REMOVE_ACTION = ("x", "remove")
 # panels are all visible at once otherwise, so there's nothing to switch between.
 _PAGED_NAV_ACTION = ("←/→", "switch panel")
 
+# Shown instead of "Enter open" once a playlist is actually open for browsing — matches
+# _KEY_ACTIONS' own position, right after Enter.
+_PLAYLIST_BACK_ACTION = ("Esc", "back")
+
 
 class QuickActionsBar(Static):
     def __init__(self, state: AppState, **kwargs) -> None:
@@ -907,13 +941,22 @@ class QuickActionsBar(Static):
         self.state = state
 
     def refresh_content(self) -> None:
+        s = self.state
         # Keys get a boxed "keycap" look so they read as literal keys to press, distinct from
         # the plain-text action next to them — a flat "Tab focus" run-on reads ambiguous to
         # someone who doesn't already know the bindings.
         actions = list(_KEY_ACTIONS)
-        if self.state.left_focus == LeftFocus.QUEUE:
+        if s.left_focus == LeftFocus.PLAYLISTS:
+            # Enter opens a playlist for browsing rather than playing it outright — only picking
+            # a track once inside it actually starts playback (see app.py's on_key/_play_selection).
+            if s.viewing_playlist is not None:
+                actions[2] = ("Enter", "play")
+                actions.insert(3, _PLAYLIST_BACK_ACTION)
+            else:
+                actions[2] = ("Enter", "open")
+        if s.left_focus == LeftFocus.QUEUE:
             actions.insert(5, _QUEUE_REMOVE_ACTION)
-        if self.state.is_sidebar_paged:
+        if s.is_sidebar_paged:
             actions.insert(1, _PAGED_NAV_ACTION)
 
         divider = "   "
