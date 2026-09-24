@@ -137,17 +137,25 @@ class MusicService:
         tracks = result.get("tracks") or []
         return [t for t in (_to_track(item) for item in tracks) if t is not None]
 
-    async def get_stream_url(self, track_id: str) -> str:
-        return await asyncio.to_thread(_resolve_stream_url, track_id)
+    async def get_stream_url(self, track_id: str, low_bandwidth: bool = False) -> str:
+        return await asyncio.to_thread(_resolve_stream_url, track_id, low_bandwidth)
 
 
-def _resolve_stream_url(track_id: str) -> str:
+# Highest quality normally; on a slow connection, the best stream at or under ~70kbps (YouTube's
+# 48-70kbps opus tiers) instead, falling back to the smallest stream available if none of those
+# exist for a track — a stream the connection can actually keep up with beats a better one that
+# stalls.
+_FORMAT_BEST = "bestaudio/best"
+_FORMAT_LOW_BANDWIDTH = "bestaudio[abr<=70]/worstaudio/bestaudio/best"
+
+
+def _resolve_stream_url(track_id: str, low_bandwidth: bool = False) -> str:
     import yt_dlp
 
     opts = {
         "quiet": True,
         "no_warnings": True,
-        "format": "bestaudio/best",
+        "format": _FORMAT_LOW_BANDWIDTH if low_bandwidth else _FORMAT_BEST,
         "noplaylist": True,
         "skip_download": True,
     }

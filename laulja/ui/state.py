@@ -80,6 +80,8 @@ class AppState:
 
     now_playing: Optional[Track] = None
     is_playing: bool = False
+    # Playback is waiting for audio to arrive (start-up, or after the network stalled).
+    is_buffering: bool = False
     position_seconds: float = 0.0
     duration_seconds: float = 0.0
     visualizer_levels: List[int] = field(default_factory=list)

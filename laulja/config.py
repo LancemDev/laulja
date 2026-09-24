@@ -19,6 +19,9 @@ class AppConfig:
     validate_auth_on_startup: bool = True
     prompt_login_on_startup: bool = True
     force_browser_login: bool = False
+    # Always stream the lower-bitrate audio tier, instead of only switching to it once the player
+    # notices repeated stalls (see AudioPlayerService).
+    low_bandwidth: bool = False
 
     @staticmethod
     def load() -> "AppConfig":
@@ -29,4 +32,5 @@ class AppConfig:
             geographical_location=os.environ.get("YT_MUSIC_GEO", "US"),
             validate_auth_on_startup=not _env_flag_disabled("YT_MUSIC_SKIP_AUTH_CHECK"),
             prompt_login_on_startup=not _env_flag_disabled("YT_MUSIC_SKIP_LOGIN"),
+            low_bandwidth=_env_flag_disabled("YT_MUSIC_LOW_BANDWIDTH"),
         )

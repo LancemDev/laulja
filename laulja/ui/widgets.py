@@ -644,10 +644,11 @@ class PlayerInfoBar(Static):
 
     def refresh_content(self, accent: Optional[str] = None) -> None:
         s = self.state
-        icon = "▶" if s.is_playing else "⏸"
+        icon = _spinner() if s.is_buffering else "▶" if s.is_playing else "⏸"
         if s.now_playing:
             liked = " ♥" if s.now_playing.id in s.liked_track_ids else ""
-            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}"
+            buffering = "  · buffering…" if s.is_buffering else ""
+            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}{buffering}"
         else:
             line = "Nothing playing  ·  Enter play · Space pause · n/p skip"
         pos = _format_seconds(s.position_seconds)

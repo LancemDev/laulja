@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import collections
 import shutil
-from typing import List, Optional
+import time
+from typing import List, Optional, Tuple
 
 from ...models import Track
 from ..music_service import MusicService
@@ -21,10 +22,31 @@ Mirrors AudioPlayerService.cs.
 SAMPLE_RATE = 44100
 CHANNELS = 2
 BYTES_PER_FRAME = CHANNELS * 2  # 16-bit samples
+_BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_FRAME
+
+# Decoded audio is read ahead of playback into an in-process buffer, so a network stall shorter
+# than the buffer is inaudible: the reader keeps ffmpeg's output pipe drained (up to
+# _READAHEAD_BYTES ahead), and the feeder only hands audio to the sink from that buffer.
+_READ_CHUNK = 16384
+_READAHEAD_BYTES = 30 * _BYTES_PER_SECOND
+# Audio to accumulate before a track first starts, and before resuming after the buffer runs dry —
+# resuming the instant one chunk arrives would just stall again a moment later.
+_PREBUFFER_BYTES = 2 * _BYTES_PER_SECOND
+_REBUFFER_BYTES = 5 * _BYTES_PER_SECOND
+
+# Adaptive quality: this many buffer underruns within one track flips upcoming tracks to the
+# lower-bitrate stream, and this many consecutive stall-free tracks flips back. A first-buffer
+# that takes longer than _SLOW_START_SECONDS to fill counts as an underrun too.
+_UNDERRUNS_TO_DOWNGRADE = 2
+_SMOOTH_TRACKS_TO_UPGRADE = 5
+_SLOW_START_SECONDS = 8.0
+
+# Stream URLs are short-lived (hours), so a prefetched one is only trusted for a while.
+_PREFETCH_TTL_SECONDS = 20 * 60
 
 
 class AudioPlayerService:
-    def __init__(self, music: MusicService):
+    def __init__(self, music: MusicService, force_low_bandwidth: bool = False):
         self._music = music
         self._analyzer = SpectrumAnalyzer()
         self._queue: List[Track] = []
@@ -42,6 +64,24 @@ class AudioPlayerService:
         self._samples_written = 0
         self._is_playing = False
         self._track_ended = False
+
+        # Read-ahead buffer between ffmpeg (reader task) and the audio sink (feeder = _pump).
+        self._reader_task: Optional[asyncio.Task] = None
+        self._buffer: "asyncio.Queue[Optional[bytes]]" = asyncio.Queue()
+        self._buffered_bytes = 0
+        self._reader_done = False
+        self._buffering = False
+
+        # Adaptive quality (see _note_underrun / _note_track_finished). `_force_low_bandwidth` is
+        # the user's explicit setting; `_auto_low_bandwidth` is what stalls have told us.
+        self._force_low_bandwidth = force_low_bandwidth
+        self._auto_low_bandwidth = False
+        self._track_underruns = 0
+        self._smooth_tracks = 0
+
+        # Stream URL for the next queue entry, resolved while the current one plays.
+        self._prefetch_task: Optional[asyncio.Task] = None
+        self._prefetch_key: Optional[Tuple[str, bool]] = None
         # Callers (the UI's key handler, and tick()'s own auto-advance) no longer await a
         # play/skip through to completion before doing anything else, so a rapid pair of skips
         # could otherwise start two _start_current() calls concurrently and corrupt playback
@@ -52,6 +92,18 @@ class AudioPlayerService:
         self.current: Optional[Track] = None
         self.duration_seconds: float = 0.0
         self.last_error: Optional[str] = None
+        # One-shot informational message for the UI (e.g. "switched to lower quality"), cleared
+        # by whoever displays it — unlike last_error, it isn't a playback failure.
+        self.notice: Optional[str] = None
+
+    @property
+    def is_buffering(self) -> bool:
+        """True while playback is waiting for more audio to arrive (start-up or after a stall)."""
+        return self._buffering and self._is_playing
+
+    @property
+    def is_low_bandwidth(self) -> bool:
+        return self._force_low_bandwidth or self._auto_low_bandwidth
 
     @property
     def is_playing(self) -> bool:
@@ -204,7 +256,7 @@ class AudioPlayerService:
         self.last_error = None
 
         try:
-            url = await self._music.get_stream_url(self.current.id)
+            url = await self._resolve_url(self.current)
         except Exception as ex:
             self.last_error = f"Couldn't resolve stream for {self.current.title}: {ex}"
             self._is_playing = False
@@ -245,8 +297,108 @@ class AudioPlayerService:
         self._sink = sink
         self._is_playing = True
         self._ffmpeg_stderr_tail = ""
+        self._buffer = asyncio.Queue()
+        self._buffered_bytes = 0
+        self._reader_done = False
+        self._buffering = True
+        self._track_underruns = 0
         self._stderr_task = asyncio.ensure_future(self._drain_stderr(ffmpeg))
+        self._reader_task = asyncio.ensure_future(self._read_ahead(ffmpeg))
         self._pump_task = asyncio.ensure_future(self._pump(ffmpeg, sink))
+        self._schedule_prefetch()
+
+    async def _resolve_url(self, track: Track) -> str:
+        low = self.is_low_bandwidth
+        if self._prefetch_key == (track.id, low) and self._prefetch_task is not None:
+            task, self._prefetch_task, self._prefetch_key = self._prefetch_task, None, None
+            result = await task
+            if result is not None and time.monotonic() - result[1] < _PREFETCH_TTL_SECONDS:
+                return result[0]
+        return await self._music.get_stream_url(track.id, low)
+
+    def _schedule_prefetch(self) -> None:
+        """Resolves the next queue entry's stream URL in the background while the current track
+        plays, so skipping or auto-advancing doesn't wait on a fresh resolve (a couple of seconds
+        on a good network, far more on a slow one). A radio queue's last entry is skipped —
+        advancing there extends the queue first, so there's no fixed "next" yet."""
+        if not self._queue or self._index < 0:
+            return
+        next_index = self._index + 1
+        if next_index >= len(self._queue):
+            if self._queue_is_radio:
+                return
+            next_index = 0
+        track = self._queue[next_index]
+        if track.id == self._queue[self._index].id:
+            return
+
+        key = (track.id, self.is_low_bandwidth)
+        if self._prefetch_key == key:
+            return
+        self._cancel_prefetch()
+        self._prefetch_key = key
+
+        async def prefetch() -> Optional[Tuple[str, float]]:
+            try:
+                return await self._music.get_stream_url(track.id, key[1]), time.monotonic()
+            except Exception:
+                return None  # not fatal — playback just resolves it normally when it's needed
+
+        self._prefetch_task = asyncio.ensure_future(prefetch())
+
+    def _cancel_prefetch(self) -> None:
+        if self._prefetch_task is not None:
+            self._prefetch_task.cancel()
+        self._prefetch_task = None
+        self._prefetch_key = None
+
+    async def _read_ahead(self, ffmpeg: asyncio.subprocess.Process) -> None:
+        """Keeps draining ffmpeg's decoded output into the read-ahead buffer, up to
+        _READAHEAD_BYTES ahead of what's been played, so a slow or stalling network only becomes
+        audible once the whole buffer has been used up."""
+        assert ffmpeg.stdout is not None
+        try:
+            while True:
+                while self._buffered_bytes >= _READAHEAD_BYTES:
+                    await asyncio.sleep(0.05)
+                chunk = await ffmpeg.stdout.read(_READ_CHUNK)
+                if not chunk:
+                    break
+                self._buffered_bytes += len(chunk)
+                self._buffer.put_nowait(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        self._buffer.put_nowait(None)
+        self._reader_done = True
+
+    async def _fill_buffer(self, target_bytes: int) -> None:
+        """Waits until `target_bytes` of audio are buffered (or the stream has ended)."""
+        while self._buffered_bytes < target_bytes and not self._reader_done:
+            await asyncio.sleep(0.05)
+
+    def _note_underrun(self) -> None:
+        self._track_underruns += 1
+        self._smooth_tracks = 0
+        if (
+            self._track_underruns >= _UNDERRUNS_TO_DOWNGRADE
+            and not self._auto_low_bandwidth
+            and not self._force_low_bandwidth
+        ):
+            self._auto_low_bandwidth = True
+            self.notice = "Slow network — using lower audio quality for upcoming tracks"
+            self._schedule_prefetch()  # the already-prefetched URL was for the higher tier
+
+    def _note_track_finished(self) -> None:
+        if self._track_underruns:
+            return
+        self._smooth_tracks += 1
+        if self._auto_low_bandwidth and self._smooth_tracks >= _SMOOTH_TRACKS_TO_UPGRADE:
+            self._auto_low_bandwidth = False
+            self._smooth_tracks = 0
+            self.notice = "Network looks fine again — restoring full audio quality"
+            self._schedule_prefetch()
 
     async def _drain_stderr(self, ffmpeg: asyncio.subprocess.Process) -> None:
         """Continuously reads ffmpeg's stderr into a bounded tail buffer for `_pump` to surface
@@ -272,13 +424,27 @@ class AudioPlayerService:
     async def _pump(self, ffmpeg: asyncio.subprocess.Process, sink) -> None:
         loop = asyncio.get_running_loop()
         try:
+            started = time.monotonic()
+            await self._fill_buffer(_PREBUFFER_BYTES)
+            if time.monotonic() - started > _SLOW_START_SECONDS:
+                self._note_underrun()
+            self._buffering = False
+
             while True:
                 while not self._is_playing:
                     await asyncio.sleep(0.05)
 
-                assert ffmpeg.stdout is not None
-                chunk = await ffmpeg.stdout.read(16384)
-                if not chunk:
+                if self._buffer.empty() and not self._reader_done:
+                    # Ran out of audio mid-track (the network can't keep up): hold off feeding
+                    # the sink until a few seconds have built back up, rather than stuttering
+                    # along a chunk at a time. The sink's own queue keeps playing meanwhile.
+                    self._buffering = True
+                    self._note_underrun()
+                    await self._fill_buffer(_REBUFFER_BYTES)
+                    self._buffering = False
+
+                chunk = await self._buffer.get()
+                if chunk is None:
                     # ffmpeg has decoded the whole track, but the sink (pw-play/paplay/aplay)
                     # can still be holding several hundred ms of already-written audio in its
                     # own internal buffer that hasn't reached the speakers yet. Closing its
@@ -288,9 +454,12 @@ class AudioPlayerService:
                     # before it's heard — the track visibly (audibly) cuts short of the end.
                     await self._drain_sink(sink)
                     await self._check_incomplete_stream(ffmpeg)
+                    if not self.last_error:
+                        self._note_track_finished()
                     self._track_ended = True
                     return
 
+                self._buffered_bytes -= len(chunk)
                 await loop.run_in_executor(None, self._write_to_sink, sink, chunk)
                 self._analyzer.feed(chunk)
                 self._samples_written += len(chunk) // BYTES_PER_FRAME
@@ -364,6 +533,15 @@ class AudioPlayerService:
                 pass
             self._pump_task = None
 
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reader_task = None
+        self._buffering = False
+
         if self._stderr_task:
             self._stderr_task.cancel()
             try:
@@ -391,4 +569,5 @@ class AudioPlayerService:
             self._sink = None
 
     async def dispose(self) -> None:
+        self._cancel_prefetch()
         await self._stop_pipeline()

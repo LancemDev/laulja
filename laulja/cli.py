@@ -70,7 +70,7 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
         asyncio.to_thread(client_factory.create, session, config.headers_auth_path),
     )
     music = MusicService(client)
-    player = AudioPlayerService(music)
+    player = AudioPlayerService(music, force_low_bandwidth=config.low_bandwidth)
     lyrics = LyricsService()
     cover_art = CoverArtService()
 

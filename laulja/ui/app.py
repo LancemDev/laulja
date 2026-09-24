@@ -300,6 +300,9 @@ class MusicApp(App[None]):
         # next_track() -> _start_current() clears last_error for the track it's advancing to.
         if self._player.last_error:
             s.status_message = self._player.last_error
+        elif self._player.notice:
+            s.status_message = self._player.notice
+            self._player.notice = None
         self._sync_player_state()
         after = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
         # Also repaint on nothing-changed ticks whenever something's still loading, so its
@@ -309,7 +312,7 @@ class MusicApp(App[None]):
         # Wallpaper visuals are time-driven (see WallpaperPanel) and meant to keep animating even
         # when playback itself hasn't changed (paused, or nothing loaded yet) — repaint every
         # tick while it's active rather than only on an actual state change.
-        if before != after or s.is_loading_library or still_fetching_details or s.is_wallpaper_mode:
+        if before != after or s.is_loading_library or still_fetching_details or s.is_wallpaper_mode or s.is_buffering:
             self.refresh_all()
 
     def _sync_player_state(self) -> None:
@@ -318,6 +321,7 @@ class MusicApp(App[None]):
 
         s.now_playing = self._player.current
         s.is_playing = self._player.is_playing
+        s.is_buffering = self._player.is_buffering
         s.position_seconds = self._player.position_seconds
         s.duration_seconds = self._player.duration_seconds
         s.queue = self._player.queue
