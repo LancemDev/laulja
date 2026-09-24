@@ -55,11 +55,11 @@ def _spinner() -> str:
 # mid-letter instead, which is unreadable — so "small" (narrower) is the fallback for that.
 _BIG_TEXT_FONTS = ["big", "small"]
 
-# How many lyric lines to show above/below the currently-playing one, each shrunk to a single
-# plain-text row and progressively dimmed — a terminal-cell stand-in for the "lines recede into
-# depth" look (real scale/blur isn't something a character grid can do), capped so it still fits
-# comfortably alongside the big current-line block on a normal-height lyrics panel.
-_LYRICS_CONTEXT_LINES = 2
+# Context lyric lines fade toward grey by this much per row of distance from the current line
+# (up to _LYRICS_MAX_FADE) — how many rows there are is decided by the panel's height, not a cap.
+_LYRICS_FADE_START = 0.35
+_LYRICS_FADE_STEP = 0.12
+_LYRICS_MAX_FADE = 0.85
 
 
 def _figlet_word_width(word: str, font: str) -> int:
@@ -309,6 +309,16 @@ class QueuePanel(ListPanel):
 
 
 class LyricsPanel(ListPanel):
+    # Synced lyrics are laid out to exactly fill the panel's height (only as many lines as fit
+    # around the current one), so there's nothing to scroll to — hide the scrollbar and ignore
+    # wheel/drag scrolling instead of letting it reveal every other line of the song. The plain
+    # unsynced dump still scrolls, since it's one long block with no "current line" to fit around.
+    DEFAULT_CSS = """
+    LyricsPanel.fit {
+        overflow-y: hidden;
+    }
+    """
+
     def __init__(self, state: AppState, **kwargs) -> None:
         # Unlike Tracks/Playlists, lyrics content should wrap: the plain (unsynced) lyrics dump
         # needs full lines readable rather than truncated, and the big block-letter rows are
@@ -324,6 +334,7 @@ class LyricsPanel(ListPanel):
         self.border_title = "Lyrics"
         s = self.state
         lyrics = s.lyrics
+        self.set_class(bool(lyrics is not None and lyrics.lines and lyrics.is_synced), "fit")
 
         if lyrics is None or not lyrics.lines:
             self._rendered_key = None
@@ -394,13 +405,15 @@ class LyricsPanel(ListPanel):
         # for the one current line (see current_style above), so it's unambiguous which single
         # line is actually playing instead of the nearest neighbor reading as highlighted too.
         context_budget = max(0, (height - block_height) // 2)
-        context_n = max(0, min(_LYRICS_CONTEXT_LINES, context_budget))
+        # Every spare row above/below the big block shows another lyric line, so a taller panel
+        # simply reveals more of the song around the current line.
+        context_n = context_budget
         outer_pad = max(0, (height - block_height - context_n * 2) // 2)
 
         def context_row(offset: int) -> tuple[str, str]:
             idx = active + offset
             text = lyrics.lines[idx].text if 0 <= idx < len(lyrics.lines) else ""
-            fade = 0.35 if abs(offset) == 1 else 0.65
+            fade = min(_LYRICS_MAX_FADE, _LYRICS_FADE_START + _LYRICS_FADE_STEP * (abs(offset) - 1))
             color = _fade_hex(accent, fade)
             weight = "" if abs(offset) == 1 else "dim"
             return _ellipsize(text, cols), f"{weight} {color}".strip()
