@@ -5,9 +5,9 @@ FFT bar visualizer, and synced lyrics, all from the terminal.
 
 ## Demo
 
-<video src="https://raw.githubusercontent.com/LancemDev/laulja/main/docs/demo.mp4" controls width="720"></video>
+![Demo](docs/demo.gif)
 
-(if that doesn't play: [`docs/demo.mp4`](docs/demo.mp4))
+([full-quality video](docs/demo.mp4))
 
 It's built on:
 
