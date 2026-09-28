@@ -62,12 +62,15 @@ _LYRICS_FADE_STEP = 0.12
 _LYRICS_MAX_FADE = 0.85
 
 
-def _figlet_word_width(word: str, font: str) -> int:
-    """How many columns `word` alone renders to in `font` — used to check a word will fit on
+def _figlet_word_width(word: str, engine: "pyfiglet.Figlet") -> int:
+    """How many columns `word` alone renders to via `engine` — used to check a word will fit on
     one row before committing to a font, since pyfiglet itself will silently tear a too-wide
-    word across rows mid-letter rather than refuse to render it."""
+    word across rows mid-letter rather than refuse to render it. Takes an already-built Figlet
+    engine rather than a font name: constructing one re-parses its whole font file, and a real
+    song's word list run through a fresh instance per word (as this used to) took multiple
+    seconds — reusing one engine across every word in the song is what makes this cheap."""
     try:
-        rendered = pyfiglet.Figlet(font=font, width=10_000).renderText(word)
+        rendered = engine.renderText(word)
     except Exception:
         return len(word)
     return max((len(row.rstrip()) for row in rendered.split("\n")), default=len(word))
@@ -79,7 +82,13 @@ def _pick_big_font(words: list[str], width: int) -> Optional[str]:
     block-letter art visually consistent instead of flipping fonts line to line whenever one
     line happens to contain a longer word than its neighbours."""
     for font in _BIG_TEXT_FONTS:
-        if not words or max(_figlet_word_width(w, font) for w in words) <= width:
+        if not words:
+            return font
+        try:
+            engine = pyfiglet.Figlet(font=font, width=10_000)
+        except Exception:
+            continue
+        if max(_figlet_word_width(w, engine) for w in words) <= width:
             return font
     return None
 
@@ -353,6 +362,15 @@ class LyricsPanel(ListPanel):
                 text = Text("\n".join(line.text for line in lyrics.lines))
                 self.set_lines(text, None, len(lyrics.lines))
                 self._rendered_key = key
+            return
+
+        # A hidden panel (sidebar collapsed to the cover+bar view, wallpaper mode, etc.) reports
+        # size (0, 0) — there's nothing to render, and picking a font/laying out the block for
+        # that isn't just wasted work, it *overwrites* the font/height cached for the real width
+        # with one picked for width 1, which then has to be redone — expensively, see
+        # _pick_big_font's docstring — the moment the panel becomes visible again, instead of
+        # just reusing what's already cached from before it was hidden.
+        if self.size.width <= 0 or self.size.height <= 0:
             return
 
         current_index = self._current_line_index(lyrics)
