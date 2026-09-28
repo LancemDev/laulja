@@ -175,3 +175,7 @@ laulja/
     listing.py              scrollable list panel base class
     art_theme.py            derives the UI color theme from cover art
 ```
+
+## License
+
+[MIT](LICENSE)
