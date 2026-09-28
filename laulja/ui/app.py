@@ -206,6 +206,7 @@ class MusicApp(App[None]):
         self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
         self._lyrics_request_id = 0
         self._cover_art_request_id = 0
+        self._search_request_id = 0
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(self.state, self._config.app_name, id="header")
@@ -312,7 +313,14 @@ class MusicApp(App[None]):
         # Wallpaper visuals are time-driven (see WallpaperPanel) and meant to keep animating even
         # when playback itself hasn't changed (paused, or nothing loaded yet) — repaint every
         # tick while it's active rather than only on an actual state change.
-        if before != after or s.is_loading_library or still_fetching_details or s.is_wallpaper_mode or s.is_buffering:
+        if (
+            before != after
+            or s.is_loading_library
+            or still_fetching_details
+            or s.is_wallpaper_mode
+            or s.is_buffering
+            or s.is_search_loading
+        ):
             self.refresh_all()
 
     def _sync_player_state(self) -> None:
@@ -546,29 +554,62 @@ class MusicApp(App[None]):
             s.status_message = "Empty query"
             s.is_showing_search_results = False
             s.is_showing_playlist_search_results = False
-        elif s.search_target == LeftFocus.PLAYLISTS:
+            self.refresh_all()
+            return
+
+        # Cleared to an empty list (not left holding whatever the last search/library view had)
+        # so the panel doesn't briefly flash stale results before this one's own land — combined
+        # with is_search_loading below, it reads as "searching…" rather than "no results" until
+        # the real answer comes back.
+        self._search_request_id += 1
+        request_id = self._search_request_id
+        s.is_search_loading = True
+        query = s.search_query
+        if s.search_target == LeftFocus.PLAYLISTS:
             s.is_showing_playlist_search_results = True
-            try:
-                playlists = await self._music.search_playlists(s.search_query)
-                s.playlist_search_results = playlists
-                s.playlists_selected_index = 0
-                s.left_focus = LeftFocus.PLAYLISTS
-                s.status_message = f"{len(playlists)} playlist(s)"
-            except Exception as ex:
-                s.playlist_search_results = []
-                s.status_message = f"Search failed: {ex}"
+            s.playlist_search_results = []
+            s.playlists_selected_index = 0
+            s.left_focus = LeftFocus.PLAYLISTS
         else:
             s.is_showing_search_results = True
-            try:
-                results = await self._music.search(s.search_query)
-                s.search_results = results.tracks
-                s.tracks_selected_index = 0
-                s.left_focus = LeftFocus.TRACKS
-                s.status_message = f"{len(results.tracks)} track(s)"
-            except Exception as ex:
-                s.search_results = []
-                s.status_message = f"Search failed: {ex}"
+            s.search_results = []
+            s.tracks_selected_index = 0
+            s.left_focus = LeftFocus.TRACKS
 
+        # Backgrounded like _launch()'s other callers — on_input_submitted is awaited to
+        # completion by Textual before it dispatches the next event, so awaiting the network
+        # round-trip in place here would freeze the whole UI (no "searching…" would ever be
+        # visible) until results came back instead of the instant feedback refresh_all() below
+        # gives right away.
+        asyncio.ensure_future(self._run_search(request_id, query, s.search_target))
+        self.refresh_all()
+
+    async def _run_search(self, request_id: int, query: str, target: LeftFocus) -> None:
+        s = self.state
+        try:
+            if target == LeftFocus.PLAYLISTS:
+                playlists = await self._music.search_playlists(query)
+                if request_id != self._search_request_id:
+                    return  # superseded by a newer search — don't clobber its results
+                s.playlist_search_results = playlists
+                s.status_message = f"{len(playlists)} playlist(s)"
+            else:
+                results = await self._music.search(query)
+                if request_id != self._search_request_id:
+                    return
+                s.search_results = results.tracks
+                s.status_message = f"{len(results.tracks)} track(s)"
+        except Exception as ex:
+            if request_id != self._search_request_id:
+                return
+            if target == LeftFocus.PLAYLISTS:
+                s.playlist_search_results = []
+            else:
+                s.search_results = []
+            s.status_message = f"Search failed: {ex}"
+        finally:
+            if request_id == self._search_request_id:
+                s.is_search_loading = False
         self.refresh_all()
 
     def on_input_changed(self, event: Input.Changed) -> None:

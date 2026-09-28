@@ -193,7 +193,9 @@ class TracksPanel(ListPanel):
 
         tracks = s.displayed_tracks
         if not tracks:
-            if s.is_loading_library and not s.is_showing_search_results:
+            if s.is_showing_search_results and s.is_search_loading:
+                self.set_lines(f"{_spinner()} Searching…", None, 0)
+            elif s.is_loading_library and not s.is_showing_search_results:
                 self.set_lines(f"{_spinner()} Loading your library…", None, 0)
             else:
                 self.set_lines("No results." if s.is_showing_search_results else "No tracks yet.", None, 0)
@@ -235,7 +237,9 @@ class PlaylistsPanel(ListPanel):
 
         playlists = s.displayed_playlists
         if not playlists:
-            if s.is_loading_library and not s.is_showing_playlist_search_results:
+            if s.is_showing_playlist_search_results and s.is_search_loading:
+                self.set_lines(f"{_spinner()} Searching…", None, 0)
+            elif s.is_loading_library and not s.is_showing_playlist_search_results:
                 self.set_lines(f"{_spinner()} Loading your playlists…", None, 0)
             else:
                 self.set_lines("No results." if s.is_showing_playlist_search_results else "No playlists yet.", None, 0)

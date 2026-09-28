@@ -37,6 +37,9 @@ class AppState:
     is_searching: bool = False
     is_showing_search_results: bool = False
     is_showing_playlist_search_results: bool = False
+    # True while a search (tracks or playlists) is in flight — distinguishes "still fetching"
+    # from "fetched and genuinely empty" in the Tracks/Playlists panels.
+    is_search_loading: bool = False
     # Which panel a search was launched from (Tracks vs Playlists — Queue counts as Tracks,
     # since there's no such thing as "searching the queue"), snapshotted when '/' is pressed
     # rather than re-read from left_focus later, so the typing indicator and submit both agree
