@@ -126,7 +126,7 @@ class AuthService:
             {"name": c.name, "value": c.value, "domain": c.domain, "path": c.path, "secure": c.secure}
             for c in cookies
         ]
-        Path(self.cookies_path).write_text(json.dumps(payload, indent=2))
+        auth_paths.secure_write_text(self.cookies_path, json.dumps(payload, indent=2))
 
         return self._persist_cookie_session(cookies, f"Saved {len(cookies)} cookies → {self.cookies_path}")
 
@@ -141,7 +141,7 @@ class AuthService:
             )
 
         auth_paths.ensure_config_directory()
-        Path(self.cookies_path).write_text(cookie_header.strip() + "\n")
+        auth_paths.secure_write_text(self.cookies_path, cookie_header.strip() + "\n")
 
         return self._persist_cookie_session(cookies, f"Saved {len(cookies)} cookies → {self.cookies_path}")
 
@@ -162,6 +162,7 @@ class AuthService:
 
         auth_paths.ensure_config_directory()
         shutil.copyfile(src, self.cookies_path)
+        auth_paths.restrict_to_owner(self.cookies_path)
 
         file = session_store.load_or_default(self.session_path)
         file.cookies_path = self.cookies_path

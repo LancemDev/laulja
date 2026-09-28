@@ -82,4 +82,4 @@ def load_or_default(path: str | Path) -> SessionFile:
 
 def save(path: str | Path, session: SessionFile) -> None:
     auth_paths.ensure_config_directory()
-    Path(path).write_text(json.dumps(session.to_json(), indent=2))
+    auth_paths.secure_write_text(path, json.dumps(session.to_json(), indent=2))
