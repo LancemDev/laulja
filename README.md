@@ -3,6 +3,12 @@
 Laulja is a yt-music-tui in Python — a terminal UI for YouTube Music with real playback, a live
 FFT bar visualizer, and synced lyrics, all from the terminal.
 
+## Demo
+
+<video src="https://raw.githubusercontent.com/LancemDev/laulja/main/docs/demo.mp4" controls width="720"></video>
+
+(if that doesn't play: [`docs/demo.mp4`](docs/demo.mp4))
+
 It's built on:
 
 | Concern               | Library/tool                                                           |
