@@ -41,6 +41,10 @@ pip install -e .
 **System dependency:** `ffmpeg` for decoding — install it via your OS's package manager
 (`apt install ffmpeg`, `brew install ffmpeg`, `scoop install ffmpeg`, …).
 
+**System dependency:** a JavaScript runtime — [Deno](https://deno.com/), Node.js, Bun, or
+QuickJS. YouTube gates audio stream URLs behind a JS challenge that yt-dlp solves with whichever
+of these is installed; without one, tracks won't play.
+
 Audio output uses [PortAudio](https://www.portaudio.com/) (via the `sounddevice` package,
 installed automatically) and works out of the box on all three platforms. On Linux, if
 PortAudio's system library (`libportaudio2`) isn't installed, it automatically falls back to

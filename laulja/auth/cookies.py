@@ -51,6 +51,18 @@ def cookies_to_header(cookies: List[Cookie]) -> str:
     return "; ".join(f"{c.name}={c.value}" for c in deduped.values())
 
 
+def to_netscape(cookies: List[Cookie]) -> str:
+    """Serializes cookies as a Netscape cookies.txt — the format yt-dlp's `cookiefile` reads."""
+    lines = ["# Netscape HTTP Cookie File"]
+    for c in cookies:
+        include_subdomains = "TRUE" if c.domain.startswith(".") else "FALSE"
+        secure = "TRUE" if c.secure else "FALSE"
+        # 0 would mark it a session cookie, which yt-dlp drops on load unless told otherwise.
+        expires = str(c.expires or 2147483647)
+        lines.append("\t".join([c.domain, include_subdomains, c.path, secure, expires, c.name, c.value]))
+    return "\n".join(lines) + "\n"
+
+
 def parse_header(cookie_header: str) -> List[Cookie]:
     cookies: List[Cookie] = []
     for part in cookie_header.split(";"):

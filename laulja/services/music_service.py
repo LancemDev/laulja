@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
+import tempfile
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from ytmusicapi import YTMusic
 
+from ..auth.cookies import Cookie, to_netscape
 from ..models import Playlist, SearchResults, Track
 
 """
@@ -92,8 +96,9 @@ def _to_playlist(item: Dict[str, Any]) -> Optional[Playlist]:
 class MusicService:
     """Thin async wrapper around ytmusicapi — a blocking library run in worker threads."""
 
-    def __init__(self, client: YTMusic):
+    def __init__(self, client: YTMusic, cookies: Optional[List[Cookie]] = None):
         self._client = client
+        self._cookies = list(cookies or [])
 
     async def get_library_tracks(self) -> List[Track]:
         songs = await asyncio.to_thread(self._client.get_library_songs, 200)
@@ -138,7 +143,7 @@ class MusicService:
         return [t for t in (_to_track(item) for item in tracks) if t is not None]
 
     async def get_stream_url(self, track_id: str, low_bandwidth: bool = False) -> str:
-        return await asyncio.to_thread(_resolve_stream_url, track_id, low_bandwidth)
+        return await asyncio.to_thread(_resolve_stream_url, track_id, low_bandwidth, self._cookies)
 
 
 # Highest quality normally; on a slow connection, the best stream at or under ~70kbps (YouTube's
@@ -149,21 +154,52 @@ _FORMAT_BEST = "bestaudio/best"
 _FORMAT_LOW_BANDWIDTH = "bestaudio[abr<=70]/worstaudio/bestaudio/best"
 
 
-def _resolve_stream_url(track_id: str, low_bandwidth: bool = False) -> str:
+_JS_RUNTIMES = ("deno", "node", "bun", "quickjs")
+
+
+def _available_js_runtimes() -> Dict[str, Dict[str, Any]]:
+    # YouTube now gates stream URLs behind a JS challenge that yt-dlp solves with an external
+    # runtime (plus the yt-dlp-ejs solver package). yt-dlp only tries deno by default, so enable
+    # whichever supported runtimes are actually installed.
+    return {name: {} for name in _JS_RUNTIMES if shutil.which(name)}
+
+
+def _resolve_stream_url(track_id: str, low_bandwidth: bool = False, cookies: Optional[List[Cookie]] = None) -> str:
     import yt_dlp
 
-    opts = {
+    opts: Dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "format": _FORMAT_LOW_BANDWIDTH if low_bandwidth else _FORMAT_BEST,
         "noplaylist": True,
         "skip_download": True,
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"https://music.youtube.com/watch?v={track_id}", download=False)
-        url = info.get("url") if info else None
-        if not url and info and info.get("requested_formats"):
-            url = info["requested_formats"][0].get("url")
-        if not url:
-            raise RuntimeError(f"No audio stream available for track {track_id}.")
-        return url
+    runtimes = _available_js_runtimes()
+    if runtimes:
+        opts["js_runtimes"] = runtimes
+
+    # Anonymous requests get "Sign in to confirm you're not a bot", so hand yt-dlp the same
+    # session cookies ytmusicapi uses. A fresh owner-only file per call, since yt-dlp writes the
+    # jar back on close and the prefetch resolve can run concurrently with the current one.
+    cookie_path: Optional[str] = None
+    if cookies:
+        fd, cookie_path = tempfile.mkstemp(prefix="laulja-cookies-", suffix=".txt")
+        with os.fdopen(fd, "w") as f:
+            f.write(to_netscape(cookies))
+        opts["cookiefile"] = cookie_path
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"https://music.youtube.com/watch?v={track_id}", download=False)
+            url = info.get("url") if info else None
+            if not url and info and info.get("requested_formats"):
+                url = info["requested_formats"][0].get("url")
+            if not url:
+                raise RuntimeError(f"No audio stream available for track {track_id}.")
+            return url
+    finally:
+        if cookie_path:
+            try:
+                os.remove(cookie_path)
+            except OSError:
+                pass
