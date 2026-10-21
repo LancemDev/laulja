@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+
+@dataclass(frozen=True)
+class ArtistRef:
+    name: str
+    # YouTube channel ID ("UC…"), when the API reported one.
+    id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -13,6 +20,8 @@ class Track:
     album: Optional[str] = None
     duration: Optional[timedelta] = None
     thumbnail_url: Optional[str] = None
+    # The individual artists behind the joined `artist` display string.
+    artists: Tuple[ArtistRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -26,6 +35,8 @@ class Playlist:
 @dataclass(frozen=True)
 class SearchResults:
     tracks: List[Track] = field(default_factory=list)
+    # Results dropped by the artist blocklist.
+    hidden: int = 0
 
 
 @dataclass(frozen=True)

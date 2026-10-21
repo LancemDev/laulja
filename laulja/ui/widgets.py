@@ -947,6 +947,7 @@ _KEY_ACTIONS = [
     ("Space", "pause"),
     ("n/p", "next/prev"),
     ("l", "like"),
+    ("b", "block artist"),
     ("/", "search"),
     ("f", "fullscreen"),
     ("c", "collapse"),

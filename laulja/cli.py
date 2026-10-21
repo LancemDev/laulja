@@ -8,6 +8,7 @@ from .auth.service import AuthService
 from .auth.session import AuthSession
 from .config import AppConfig
 from .services.audio.player import AudioPlayerService
+from .services.blocklist import DEFAULT_SHARED_SOURCES, ArtistBlocklist, update_shared_list
 from .services.cover_art_service import CoverArtService
 from .services.lyrics_service import LyricsService
 from .services.music_service import MusicService
@@ -69,14 +70,15 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
         "Connecting to YouTube Music…",
         asyncio.to_thread(client_factory.create, session, config.headers_auth_path),
     )
-    music = MusicService(client, session.cookies)
+    blocklist = ArtistBlocklist().load()
+    music = MusicService(client, session.cookies, blocklist)
     player = AudioPlayerService(music, force_low_bandwidth=config.low_bandwidth)
     lyrics = LyricsService()
     cover_art = CoverArtService()
 
     from .ui.app import MusicApp
 
-    app = MusicApp(config, music, player, lyrics, cover_art, session, auth_service)
+    app = MusicApp(config, music, player, lyrics, cover_art, session, auth_service, blocklist)
     try:
         await app.run_async()
     finally:
@@ -135,6 +137,29 @@ async def _run_cli(args: list[str], auth: AuthService, config: AppConfig) -> int
             print(str(ex), file=sys.stderr)
             return 1
 
+    if command in ("--update-blocklist", "update-blocklist"):
+        sources = args[1:] or list(DEFAULT_SHARED_SOURCES)
+        print("Downloading shared AI-artist blocklists…")
+        report = await asyncio.to_thread(update_shared_list, None, sources)
+        for url, count, error in report:
+            print(f"  {url}\n    {'failed: ' + error if error else f'{count} entries'}")
+        if not any(count for _, count, _ in report):
+            print("Nothing downloaded — existing shared blocklist left unchanged.", file=sys.stderr)
+            return 1
+        blocklist = ArtistBlocklist().load()
+        print(f"Saved {blocklist.shared_count} unique entries to {blocklist.shared_path}")
+        return 0
+
+    if command in ("--blocklist-status", "blocklist-status"):
+        blocklist = ArtistBlocklist().load()
+        if blocklist.load_error:
+            print(blocklist.load_error, file=sys.stderr)
+        print(f"Your blocks:   {len(blocklist.blocked)}  ({blocklist.local_path})")
+        for entry in blocklist.blocked:
+            print(f"  - {entry.name}{f'  [{entry.id}]' if entry.id else ''}")
+        print(f"Shared list:   {blocklist.shared_count} entries  ({blocklist.shared_path})")
+        return 0
+
     if command in ("--help", "-h", "help"):
         _print_help()
         return 0
@@ -162,6 +187,9 @@ def _print_help() -> None:
   --login                   Force browser sign-in flow
   --auth-status             Load cookies and validate auth
   --import-cookies <path>   Copy cookie file into config and validate
+  --update-blocklist [url…] Download shared AI-artist blocklists (default:
+                            AiSList + Ionotter's list) for radio/search filtering
+  --blocklist-status        Show your blocked artists and the shared list size
   --help                    Show this help
 
 On first run (or expired cookies), the app opens YouTube Music sign-in

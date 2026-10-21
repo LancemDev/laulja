@@ -61,6 +61,8 @@ laulja                       # start the TUI (opens browser login if needed)
 laulja --login               # force the browser sign-in flow
 laulja --auth-status         # load cookies and validate auth
 laulja --import-cookies path # copy a cookies.txt into config and validate
+laulja --update-blocklist    # download shared AI-artist blocklists (see *Blocking AI artists*)
+laulja --blocklist-status    # list your blocked artists and the shared list size
 laulja --help
 ```
 
@@ -79,6 +81,8 @@ Enter      play selected track / queue item · open selected playlist · play a 
 Space      play/pause
 n / p      next / previous track
 l          like / unlike the track that's playing
+b          block the playing track's artist (skips it and clears them from the queue)
+u          undo the last block
 x          remove the selected track from the Queue panel
 /          search — Tracks or Playlists, whichever panel is focused (Esc cancels, Enter runs it)
 Esc        back to library from search results · back out of an opened playlist
@@ -119,6 +123,35 @@ The sidebar starts in **single-view** mode: only the focused panel (Tracks, Queu
 Playlists) is shown, filling the sidebar's full height so long lists don't need scrolling —
 `Tab`/`←`/`→` switch between them. Press `v` to switch to the old stacked layout, where all
 three show at once in a fixed height split.
+
+## Blocking AI artists
+
+Radio queues and search results are filtered through an artist blocklist, to keep
+AI-generated "artists" (or anyone else) out of your recommendations. Your library and playlists
+are never filtered — they're your own picks.
+
+- **Your own blocks.** Press `b` while a track plays to block its main artist: the track is
+  skipped, their other upcoming tracks leave the queue, and they won't show up in radio or
+  search again. `u` undoes the most recent block. Blocks are saved to `blocklist.json` in the
+  config directory.
+- **Shared lists (optional).** `laulja --update-blocklist` downloads community lists of AI
+  channels — [AiSList](https://github.com/Override92/AiSList) (CC BY-NC 4.0) and
+  [Ionotter's BlockTube list](https://pastebin.com/QS93tnXk), which includes
+  [surasshu's AI music blocklist](https://surasshu.com/blocklist-for-ai-music-on-youtube/) —
+  into `shared_blocklist.txt`. Nothing is downloaded unless you run it; rerun it to refresh.
+  Pass your own URLs instead (`laulja --update-blocklist URL…`) to use other lists in the same
+  one-entry-per-line format (`UC…` channel IDs and/or `@handles`).
+- **Allow list.** If a shared list wrongly flags an artist, add their channel ID or exact name
+  to `"allow"` in `blocklist.json` — it overrides everything:
+
+  ```json
+  { "blocked": [], "allow": ["UCxxxxxxxxxxxxxxxxxxxxxx", "Some Artist"] }
+  ```
+
+Channel IDs match exactly. Lists that only publish `@handles` are matched against artist names
+with spaces and punctuation ignored (`@SuperCatLeague` ↔ "Super Cat League"), skipping handles
+under 6 characters — a heuristic, so it can miss artists or, rarely, catch the wrong one. No
+blocklist catches AI artists nobody has reported yet; `b` is for those.
 
 ## Slow networks
 
@@ -169,6 +202,7 @@ laulja/
   auth/                    cookie parsing, browser cookie auto-detect, sign-in flow
   services/
     music_service.py       ytmusicapi + yt-dlp wrapper
+    blocklist.py            artist blocklist (own blocks + shared AI lists)
     lyrics_service.py       LRCLIB client
     cover_art_service.py    thumbnail fetching
     audio/                  ffmpeg pipeline, audio sink, FFT bar visualizer
