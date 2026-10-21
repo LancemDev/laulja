@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional
 from ytmusicapi import YTMusic
 
 from ..auth.cookies import Cookie, to_netscape
-from ..models import Playlist, SearchResults, Track
+from ..models import ArtistRef, Playlist, SearchResults, Track
+from .blocklist import ArtistBlocklist
 
 """
 Wraps ytmusicapi (library/search/playlists — ytmusicapi has no streaming endpoint) and
@@ -44,9 +45,12 @@ def _track_duration(song: Dict[str, Any]) -> Optional[timedelta]:
     return _parse_length(song.get("length"))
 
 
-def _artist_names(artists: Optional[List[Dict[str, Any]]]) -> str:
-    names = [a.get("name") for a in (artists or []) if a and a.get("name")]
-    return ", ".join(names) if names else "Unknown Artist"
+def _artist_refs(artists: Optional[List[Dict[str, Any]]]) -> tuple[ArtistRef, ...]:
+    return tuple(
+        ArtistRef(name=a["name"], id=a.get("id") or None)
+        for a in (artists or [])
+        if a and a.get("name")
+    )
 
 
 def _thumbnail(thumbnails: Optional[List[Dict[str, Any]]]) -> Optional[str]:
@@ -65,10 +69,12 @@ def _to_track(song: Dict[str, Any]) -> Optional[Track]:
     video_id = song.get("videoId")
     if not video_id:
         return None
+    artists = _artist_refs(song.get("artists"))
     return Track(
         id=video_id,
         title=song.get("title") or "Unknown",
-        artist=_artist_names(song.get("artists")),
+        artist=", ".join(a.name for a in artists) if artists else "Unknown Artist",
+        artists=artists,
         album=_album_name(song.get("album")),
         duration=_track_duration(song),
         # Search results key thumbnails as "thumbnails"; watch-playlist (radio/mix) tracks key
@@ -96,9 +102,17 @@ def _to_playlist(item: Dict[str, Any]) -> Optional[Playlist]:
 class MusicService:
     """Thin async wrapper around ytmusicapi — a blocking library run in worker threads."""
 
-    def __init__(self, client: YTMusic, cookies: Optional[List[Cookie]] = None):
+    def __init__(
+        self,
+        client: YTMusic,
+        cookies: Optional[List[Cookie]] = None,
+        blocklist: Optional[ArtistBlocklist] = None,
+    ):
         self._client = client
         self._cookies = list(cookies or [])
+        # Applied to recommendations (radio) and search only — library and playlist contents are
+        # the user's own picks, so they're left as-is.
+        self._blocklist = blocklist
 
     async def get_library_tracks(self) -> List[Track]:
         songs = await asyncio.to_thread(self._client.get_library_songs, 200)
@@ -115,7 +129,8 @@ class MusicService:
     async def search(self, query: str) -> SearchResults:
         results = await asyncio.to_thread(self._client.search, query, "songs", None, 25)
         tracks = [t for t in (_to_track(r) for r in results) if t is not None]
-        return SearchResults(tracks=tracks[:25])
+        tracks, hidden = self._apply_blocklist(tracks)
+        return SearchResults(tracks=tracks[:25], hidden=hidden)
 
     async def search_playlists(self, query: str) -> List[Playlist]:
         results = await asyncio.to_thread(self._client.search, query, "playlists", None, 25)
@@ -140,7 +155,12 @@ class MusicService:
         you play an individual song outside a playlist. The seed track is included first."""
         result = await asyncio.to_thread(self._client.get_watch_playlist, track_id, None, limit, True)
         tracks = result.get("tracks") or []
-        return [t for t in (_to_track(item) for item in tracks) if t is not None]
+        return self._apply_blocklist([t for t in (_to_track(item) for item in tracks) if t is not None])[0]
+
+    def _apply_blocklist(self, tracks: List[Track]) -> tuple[List[Track], int]:
+        if self._blocklist is None:
+            return tracks, 0
+        return self._blocklist.filter(tracks)
 
     async def get_stream_url(self, track_id: str, low_bandwidth: bool = False) -> str:
         return await asyncio.to_thread(_resolve_stream_url, track_id, low_bandwidth, self._cookies)

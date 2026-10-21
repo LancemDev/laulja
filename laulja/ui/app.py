@@ -14,6 +14,7 @@ from ..auth.session import AuthSession
 from ..config import AppConfig
 from ..models import Playlist, Track
 from ..services.audio.player import AudioPlayerService
+from ..services.blocklist import ArtistBlocklist, BlockChange
 from ..services.cover_art_service import CoverArtService
 from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
@@ -194,6 +195,7 @@ class MusicApp(App[None]):
         cover_art: CoverArtService,
         auth: AuthSession,
         auth_service: AuthService,
+        blocklist: ArtistBlocklist,
     ) -> None:
         super().__init__()
         self._config = config
@@ -203,6 +205,9 @@ class MusicApp(App[None]):
         self._cover_art = cover_art
         self._auth = auth
         self._auth_service = auth_service
+        self._blocklist = blocklist
+        # What "u" undoes — only the most recent block from this session.
+        self._last_blocked: Optional[BlockChange] = None
         self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
         self._lyrics_request_id = 0
         self._cover_art_request_id = 0
@@ -286,6 +291,9 @@ class MusicApp(App[None]):
                 if self._auth.is_authenticated
                 else f"Auth: {self._auth.status_label} · {self._auth.status_detail}"
             )
+
+        if self._blocklist.load_error:
+            s.status_message = self._blocklist.load_error
 
         s.is_loading_library = False
 
@@ -529,6 +537,15 @@ class MusicApp(App[None]):
             self._launch(self._toggle_like(), loading="Updating rating…")
             return
 
+        if event.key == "b":
+            self._launch(self._block_current_artist(), loading="Blocking artist…")
+            return
+
+        if event.key == "u":
+            self._undo_block()
+            self.refresh_all()
+            return
+
         if event.key == "x":
             if s.left_focus == LeftFocus.QUEUE and s.queue:
                 self._launch(self._remove_queue_selection(), loading="Removing…")
@@ -598,7 +615,9 @@ class MusicApp(App[None]):
                 if request_id != self._search_request_id:
                     return
                 s.search_results = results.tracks
-                s.status_message = f"{len(results.tracks)} track(s)"
+                s.status_message = f"{len(results.tracks)} track(s)" + (
+                    f" · {results.hidden} hidden by blocklist" if results.hidden else ""
+                )
         except Exception as ex:
             if request_id != self._search_request_id:
                 return
@@ -786,6 +805,64 @@ class MusicApp(App[None]):
         else:
             s.liked_track_ids.discard(track.id)
             s.status_message = f"Unliked {track.title}"
+
+    async def _block_current_artist(self) -> None:
+        """Blocks the playing track's main artist: future radio/search results skip them, their
+        upcoming tracks leave the queue, and the current track is skipped."""
+        s = self.state
+        track = s.now_playing
+        if track is None:
+            s.status_message = "Nothing playing to block"
+            return
+        if not track.artists:
+            s.status_message = "Can't tell who the artist of this track is"
+            return
+
+        artist = track.artists[0]
+        try:
+            change = self._blocklist.block(artist)
+        except OSError as ex:
+            s.status_message = f"Couldn't save blocklist: {ex}"
+            return
+        # Already blocked (e.g. playing from a playlist, which isn't filtered) — keep the
+        # previous undo target so "u" can't remove a block that predates this key press.
+        if change is not None:
+            self._last_blocked = change
+
+        if s.is_showing_search_results:
+            s.search_results = [t for t in s.search_results if not self._blocklist.is_blocked(t)]
+            s.tracks_selected_index = max(0, min(s.tracks_selected_index, len(s.search_results) - 1))
+
+        removed = await self._player.remove_matching(self._blocklist.is_blocked)
+        skipped = False
+        if len(self._player.queue) > 1:
+            await self._player.next_track()
+            # The blocked track is no longer the current one, so it can go now too.
+            await self._player.remove_matching(self._blocklist.is_blocked)
+            skipped = True
+        self._sync_player_state()
+
+        parts = [f"Blocked {artist.name}"]
+        if removed:
+            parts.append(f"removed {removed} from queue")
+        if not skipped:
+            parts.append("nothing else queued")
+        parts.append("u to undo")
+        s.status_message = self._player.last_error or " · ".join(parts)
+
+    def _undo_block(self) -> None:
+        s = self.state
+        change = self._last_blocked
+        if change is None:
+            s.status_message = "Nothing to undo"
+            return
+        try:
+            self._blocklist.undo(change)
+        except OSError as ex:
+            s.status_message = f"Couldn't save blocklist: {ex}"
+            return
+        self._last_blocked = None
+        s.status_message = f"Unblocked {change.entry.name}"
 
     # ---- layout ------------------------------------------------------------
 

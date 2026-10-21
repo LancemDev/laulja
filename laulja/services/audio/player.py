@@ -4,7 +4,7 @@ import asyncio
 import collections
 import shutil
 import time
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from ...models import Track
 from ..music_service import MusicService
@@ -168,11 +168,16 @@ class AudioPlayerService:
             if not tracks:
                 tracks = [track]
 
+            # The radio isn't guaranteed to list the seed track first (or at all — the blocklist
+            # may have filtered it out) — make sure playback actually starts on the track the
+            # user picked, not track 0 of the mix.
+            index = next((i for i, t in enumerate(tracks) if t.id == track.id), None)
+            if index is None:
+                tracks.insert(0, track)
+                index = 0
             self._queue = tracks
             self._queue_is_radio = True
-            # The radio isn't guaranteed to list the seed track first (or at all) — make sure
-            # playback actually starts on the track the user picked, not track 0 of the mix.
-            self._index = next((i for i, t in enumerate(tracks) if t.id == track.id), 0)
+            self._index = index
             await self._start_current()
 
     async def toggle_pause(self) -> None:
@@ -240,6 +245,28 @@ class AudioPlayerService:
             if index < self._index:
                 self._index -= 1
             return None
+
+    async def remove_matching(self, predicate: Callable[[Track], bool]) -> int:
+        """Removes every queue entry matching `predicate` except the one currently playing (same
+        reasoning as remove_at). Returns how many were removed."""
+        async with self._action_lock:
+            if not self._queue:
+                return 0
+            kept: List[Track] = []
+            new_index = self._index
+            for i, t in enumerate(self._queue):
+                if i != self._index and predicate(t):
+                    if i < self._index:
+                        new_index -= 1
+                    continue
+                kept.append(t)
+            removed = len(self._queue) - len(kept)
+            if removed:
+                self._queue = kept
+                self._index = new_index
+                # The prefetched "next" may have just been removed.
+                self._schedule_prefetch()
+            return removed
 
     def tick(self) -> None:
         if not self._track_ended:
