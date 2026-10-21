@@ -14,7 +14,7 @@ from ..auth.session import AuthSession
 from ..config import AppConfig
 from ..models import Playlist, Track
 from ..services.audio.player import AudioPlayerService
-from ..services.blocklist import ArtistBlocklist, BlockedArtist
+from ..services.blocklist import ArtistBlocklist, BlockChange
 from ..services.cover_art_service import CoverArtService
 from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
@@ -207,7 +207,7 @@ class MusicApp(App[None]):
         self._auth_service = auth_service
         self._blocklist = blocklist
         # What "u" undoes — only the most recent block from this session.
-        self._last_blocked: Optional[BlockedArtist] = None
+        self._last_blocked: Optional[BlockChange] = None
         self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
         self._lyrics_request_id = 0
         self._cover_art_request_id = 0
@@ -820,11 +820,18 @@ class MusicApp(App[None]):
 
         artist = track.artists[0]
         try:
-            entry = self._blocklist.block(artist)
+            change = self._blocklist.block(artist)
         except OSError as ex:
             s.status_message = f"Couldn't save blocklist: {ex}"
             return
-        self._last_blocked = entry
+        # Already blocked (e.g. playing from a playlist, which isn't filtered) — keep the
+        # previous undo target so "u" can't remove a block that predates this key press.
+        if change is not None:
+            self._last_blocked = change
+
+        if s.is_showing_search_results:
+            s.search_results = [t for t in s.search_results if not self._blocklist.is_blocked(t)]
+            s.tracks_selected_index = max(0, min(s.tracks_selected_index, len(s.search_results) - 1))
 
         removed = await self._player.remove_matching(self._blocklist.is_blocked)
         skipped = False
@@ -845,17 +852,17 @@ class MusicApp(App[None]):
 
     def _undo_block(self) -> None:
         s = self.state
-        entry = self._last_blocked
-        if entry is None:
+        change = self._last_blocked
+        if change is None:
             s.status_message = "Nothing to undo"
             return
         try:
-            self._blocklist.unblock(entry)
+            self._blocklist.undo(change)
         except OSError as ex:
             s.status_message = f"Couldn't save blocklist: {ex}"
             return
         self._last_blocked = None
-        s.status_message = f"Unblocked {entry.name}"
+        s.status_message = f"Unblocked {change.entry.name}"
 
     # ---- layout ------------------------------------------------------------
 

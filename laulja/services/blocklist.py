@@ -70,6 +70,14 @@ class BlockedArtist:
     id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class BlockChange:
+    entry: BlockedArtist
+    added: bool
+    removed_allow_ids: frozenset = frozenset()
+    removed_allow_names: frozenset = frozenset()
+
+
 class ArtistBlocklist:
     def __init__(self, directory: Optional[Path] = None):
         self._directory = directory or config_directory()
@@ -102,7 +110,7 @@ class ArtistBlocklist:
         self._local_unreadable = False
         try:
             if self.local_path.exists():
-                data = json.loads(self.local_path.read_text())
+                data = json.loads(self.local_path.read_text(encoding="utf-8"))
                 self._blocked = [
                     BlockedArtist(name=a.get("name") or "", id=a.get("id") or None)
                     for a in data.get("blocked", [])
@@ -111,7 +119,7 @@ class ArtistBlocklist:
                 allow = data.get("allow", [])
                 self._allow_ids = {a for a in allow if isinstance(a, str) and _CHANNEL_ID.match(a)}
                 self._allow_names = {_name_key(a) for a in allow if isinstance(a, str) and not _CHANNEL_ID.match(a)}
-        except (OSError, ValueError, AttributeError) as ex:
+        except (OSError, ValueError, AttributeError, TypeError) as ex:
             # A hand-edited file with a typo shouldn't stop the app from starting — but it
             # mustn't be overwritten by the next block either (see _save).
             self.load_error = f"Couldn't read {self.local_path}: {ex}"
@@ -119,8 +127,10 @@ class ArtistBlocklist:
 
         try:
             if self.shared_path.exists():
-                self._shared_ids, self._shared_handles = parse_shared_list(self.shared_path.read_text())
-        except OSError as ex:
+                self._shared_ids, self._shared_handles = parse_shared_list(
+                    self.shared_path.read_text(encoding="utf-8")
+                )
+        except (OSError, ValueError) as ex:
             self.load_error = f"Couldn't read {self.shared_path}: {ex}"
         return self
 
@@ -134,7 +144,7 @@ class ArtistBlocklist:
             "blocked": [{"id": a.id, "name": a.name} for a in self._blocked],
             "allow": sorted(self._allow_ids) + sorted(self._allow_names),
         }
-        self.local_path.write_text(json.dumps(data, indent=2) + "\n")
+        _write_atomic(self.local_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
     def _is_allowed(self, artist: ArtistRef) -> bool:
         return (artist.id is not None and artist.id in self._allow_ids) or _name_key(artist.name) in self._allow_names
@@ -160,23 +170,66 @@ class ArtistBlocklist:
         kept = [t for t in tracks if not self.is_blocked(t)]
         return kept, len(tracks) - len(kept)
 
-    def block(self, artist: ArtistRef) -> BlockedArtist:
+    def block(self, artist: ArtistRef) -> Optional[BlockChange]:
+        """Blocks `artist` and returns what changed (for undo), or None if they were already
+        blocked and nothing changed. On a failed save the in-memory state is rolled back."""
         self._check_writable()
         entry = BlockedArtist(name=artist.name, id=artist.id)
-        if entry not in self._blocked:
-            self._blocked.append(entry)
+        name_key = _name_key(artist.name)
         # Explicitly blocking someone also takes them back off the allow list.
-        if artist.id:
-            self._allow_ids.discard(artist.id)
-        self._allow_names.discard(_name_key(artist.name))
-        self._save()
-        return entry
-
-    def unblock(self, entry: BlockedArtist) -> None:
-        self._check_writable()
-        if entry in self._blocked:
-            self._blocked.remove(entry)
+        change = BlockChange(
+            entry=entry,
+            added=entry not in self._blocked,
+            removed_allow_ids=frozenset({artist.id} & self._allow_ids) if artist.id else frozenset(),
+            removed_allow_names=frozenset({name_key} & self._allow_names),
+        )
+        if not (change.added or change.removed_allow_ids or change.removed_allow_names):
+            return None
+        self._apply(change, undo=False)
+        try:
             self._save()
+        except OSError:
+            self._apply(change, undo=True)
+            raise
+        return change
+
+    def undo(self, change: BlockChange) -> None:
+        """Reverts a block() — removes the entry it added and restores any allow-list entries
+        it took away. On a failed save the in-memory state is rolled back."""
+        self._check_writable()
+        self._apply(change, undo=True)
+        try:
+            self._save()
+        except OSError:
+            self._apply(change, undo=False)
+            raise
+
+    def _apply(self, change: BlockChange, undo: bool) -> None:
+        if undo:
+            if change.added and change.entry in self._blocked:
+                self._blocked.remove(change.entry)
+            self._allow_ids |= change.removed_allow_ids
+            self._allow_names |= change.removed_allow_names
+        else:
+            if change.added:
+                self._blocked.append(change.entry)
+            self._allow_ids -= change.removed_allow_ids
+            self._allow_names -= change.removed_allow_names
+
+
+def _write_atomic(path: Path, content: str) -> None:
+    """Writes via a temp file in the same directory + rename, so a crash or full disk mid-write
+    never leaves a truncated file behind."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def update_shared_list(directory: Optional[Path] = None, sources: Sequence[str] = DEFAULT_SHARED_SOURCES) -> List[Tuple[str, Optional[int], Optional[str]]]:
@@ -217,7 +270,5 @@ def update_shared_list(directory: Optional[Path] = None, sources: Sequence[str] 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = [f"! laulja shared blocklist — downloaded {stamp}", *(f"! source: {url}" for url, n, _ in report if n is not None), ""]
     body = sorted(ids) + sorted(handle_lines, key=str.casefold)
-    tmp = target.with_suffix(".tmp")
-    tmp.write_text("\n".join(header + body) + "\n")
-    tmp.replace(target)
+    _write_atomic(target, "\n".join(header + body) + "\n")
     return report
