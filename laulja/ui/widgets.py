@@ -798,8 +798,12 @@ class WallpaperPanel(Static):
     ) -> tuple[list[str], list[_RowSpans]]:
         """Wide, mirrored equalizer bars driven by the real audio spectrum (AppState's own
         visualizer_levels — the same data BarVisualizerPanel uses, just spread full-screen and
-        rainbow-shifted around the theme accent). Idles with a gentle breathing wave instead of
-        flatlining while paused or before playback starts."""
+        rainbow-shifted around the theme accent).
+
+        As long as a track is loaded the bars mirror the real spectrum, which means they hold
+        *still* while paused: the analyzer stops being fed the moment playback pauses (see
+        player.py's pump), so the last frame simply stays on screen. Only with nothing playing
+        at all do they idle with a gentle breathing wave rather than sitting flat."""
         s = self.state
         levels = s.visualizer_levels
         n = len(levels)
@@ -809,8 +813,12 @@ class WallpaperPanel(Static):
         grid = [[" "] * cols for _ in range(rows)]
         spans: list[_RowSpans] = [[] for _ in range(rows)]
 
+        # A track is loaded (playing *or* paused) → the real spectrum, frozen at its last frame
+        # while paused. Nothing playing at all → the idle breathing wave.
+        has_track = s.now_playing is not None
+
         for col in range(cols):
-            if n and s.is_playing:
+            if n and has_track:
                 level = levels[min(n - 1, col * n // cols)]
             else:
                 level = (math.sin(t * 1.4 + col * 0.18) * 0.5 + 0.5) * 22

@@ -488,7 +488,13 @@ class AudioPlayerService:
 
                 self._buffered_bytes -= len(chunk)
                 await loop.run_in_executor(None, self._write_to_sink, sink, chunk)
-                self._analyzer.feed(chunk)
+                # Only analyze audio that was handed to the sink while actually playing: a
+                # pause that lands mid-write (the sink's queue can block for a moment when it's
+                # backed up) would otherwise push one more chunk through the analyzer, so the
+                # bar visualizer would twitch once more after the pause instead of holding
+                # perfectly still.
+                if self._is_playing:
+                    self._analyzer.feed(chunk)
                 self._samples_written += len(chunk) // BYTES_PER_FRAME
         except asyncio.CancelledError:
             pass  # expected on stop/skip — the pipeline is being torn down deliberately
