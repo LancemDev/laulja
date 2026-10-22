@@ -96,8 +96,9 @@ q          quit
 keeps playing exactly as before, just without any of the normal panels on screen. Pick from
 four visuals with `←`/`→`: `spectrum` (mirrored bars driven by the real audio spectrum),
 `starfield`, `rain`, and `plasma` (a chunky, retro color field) — the latter three animate on
-their own even while paused. Playback controls (`space`, `n`/`p`, `l`) still work while it's
-active; `w` again returns to the normal layout.
+their own even while paused. The spectrum is the one exception: it mirrors the real audio, so
+its bars hold still while a song is paused. Playback controls (`space`, `n`/`p`, `l`) still work
+while it's active; `w` again returns to the normal layout.
 
 Playing an individual track (library or search) starts a YouTube Music radio/mix seeded from
 it — a continuous queue of similar-vibe songs — rather than just the track alone. A playlist
