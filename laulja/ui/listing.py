@@ -30,6 +30,19 @@ class ListPanel(VerticalScroll):
         scrollbar-background-active: $surface;
     }
 
+    /* Search results temporarily replace the library in the Tracks/Playlists panel. Without a
+       distinct treatment the panel looks exactly like an ordinary library listing — same border,
+       same title style, same rows — so it's easy to forget you're looking at a search and read
+       the results as if they were your saved library. A title badge (accent background) plus an
+       accent border only while results are showing makes the mode change obvious at a glance. */
+    ListPanel.search-results {
+        border: round $accent;
+        border-title-background: $accent;
+        border-title-color: $surface;
+        border-title-style: bold;
+        border-subtitle-color: $accent;
+    }
+
     /* The reveal/scroll math below (_reveal, _reveal_centered) assumes one rendered row per
        list item — it scrolls by row index. Textual's newer rendering pipeline converts a Rich
        Text into its own Content object (Content.from_rich_text), which drops Text's own

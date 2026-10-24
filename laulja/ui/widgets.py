@@ -5,6 +5,7 @@ import io
 import math
 import os
 import random
+import re
 import textwrap
 import time
 from datetime import timedelta
@@ -12,6 +13,7 @@ from typing import List, Optional, Tuple
 
 import pyfiglet
 from PIL import Image as PILImage
+from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -165,6 +167,30 @@ def _format_short_duration(d: Optional[timedelta]) -> str:
     return f"{m}:{s:02d}"
 
 
+def _count_noun(count: int, noun: str) -> str:
+    """`3 tracks`, `1 playlist` — keeps the search-result subtitles short enough to fit the
+    sidebar's fixed 28 columns at the default terminal size."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _append_highlighted(text: Text, value: str, query: str, style: str) -> None:
+    """Appends `value` to `text`, emphasizing every case-insensitive occurrence of `query` — how
+    search-result rows show *why* they matched, which also makes them read differently from an
+    ordinary library row at a glance. Built as Rich spans rather than console markup so a query
+    containing brackets (or anything else markup-like) is matched literally and can't change how
+    the row renders."""
+    if not query:
+        text.append(value)
+        return
+
+    cursor = 0
+    for match in re.finditer(re.escape(query), value, re.IGNORECASE):
+        text.append(value[cursor : match.start()])
+        text.append(match.group(0), style=style)
+        cursor = match.end()
+    text.append(value[cursor:])
+
+
 def _format_seconds(total_seconds: float) -> str:
     total = max(0, int(total_seconds))
     h, rem = divmod(total, 3600)
@@ -187,22 +213,36 @@ class TracksPanel(ListPanel):
         super().__init__(**kwargs)
         self.state = state
 
-    def refresh_content(self) -> None:
+    def refresh_content(self, accent: Optional[str] = None) -> None:
         s = self.state
-        title = (
-            f"Search: /{s.search_query}█"
-            if s.is_searching and s.search_target == LeftFocus.TRACKS
-            else f"Tracks · Search: {s.search_query}"
-            if s.is_showing_search_results
-            else "Tracks · Library"
-        )
+        is_search_view = s.is_showing_search_results
+        self.set_class(is_search_view, "search-results")
+
+        if s.is_searching and s.search_target == LeftFocus.TRACKS:
+            title = f"Search tracks: /{escape(s.search_query)}█"
+            subtitle = "Esc: cancel"
+        elif is_search_view:
+            title = f'Results for "{escape(s.search_query)}"'
+            # is_search_loading is shared by track and playlist searches — only show it here when
+            # this panel's own search is the one still running.
+            searching = s.is_search_loading and s.search_target == LeftFocus.TRACKS
+            subtitle = (
+                "Searching… · Esc back"
+                if searching
+                else f"{_count_noun(len(s.search_results), 'track')} · Esc back"
+            )
+        else:
+            title = "Tracks · Library"
+            subtitle = None
+
         if s.left_focus == LeftFocus.TRACKS:
             title = f"▶ {title}"
         self.border_title = title
+        self.border_subtitle = subtitle
 
         tracks = s.displayed_tracks
         if not tracks:
-            if s.is_showing_search_results and s.is_search_loading:
+            if s.is_showing_search_results and s.is_search_loading and s.search_target == LeftFocus.TRACKS:
                 self.set_lines(f"{_spinner()} Searching…", None, 0)
             elif s.is_loading_library and not s.is_showing_search_results:
                 self.set_lines(f"{_spinner()} Loading your library…", None, 0)
@@ -210,14 +250,23 @@ class TracksPanel(ListPanel):
                 self.set_lines("No results." if s.is_showing_search_results else "No tracks yet.", None, 0)
             return
 
+        highlight = f"bold {accent}" if accent else "bold"
         text = Text()
         for i, t in enumerate(tracks):
             marker = "♪ " if s.now_playing and s.now_playing.id == t.id else "  "
-            line = f"{marker}{t.title}  ·  {t.artist}  [{_format_short_duration(t.duration)}]"
-            style = "reverse" if i == s.tracks_selected_index else ""
+            line = Text(marker)
+            if is_search_view:
+                _append_highlighted(line, t.title, s.search_query, highlight)
+                line.append("  ·  ")
+                _append_highlighted(line, t.artist, s.search_query, highlight)
+                line.append(f"  [{_format_short_duration(t.duration)}]")
+            else:
+                line.append(f"{t.title}  ·  {t.artist}  [{_format_short_duration(t.duration)}]")
+            if i == s.tracks_selected_index:
+                line.stylize("reverse")
             if i:
                 text.append("\n")
-            text.append(line, style=style)
+            text.append(line)
 
         self.set_lines(text, s.tracks_selected_index, len(tracks))
 
@@ -227,26 +276,42 @@ class PlaylistsPanel(ListPanel):
         super().__init__(**kwargs)
         self.state = state
 
-    def refresh_content(self) -> None:
+    def refresh_content(self, accent: Optional[str] = None) -> None:
         s = self.state
         if s.viewing_playlist is not None:
             self._refresh_viewing_playlist()
             return
 
-        title = (
-            f"Search: /{s.search_query}█"
-            if s.is_searching and s.search_target == LeftFocus.PLAYLISTS
-            else f"Playlists · Search: {s.search_query}"
-            if s.is_showing_playlist_search_results
-            else "Playlists"
-        )
+        is_search_view = s.is_showing_playlist_search_results
+        self.set_class(is_search_view, "search-results")
+
+        if s.is_searching and s.search_target == LeftFocus.PLAYLISTS:
+            title = f"Search playlists: /{escape(s.search_query)}█"
+            subtitle = "Esc: cancel"
+        elif is_search_view:
+            title = f'Results for "{escape(s.search_query)}"'
+            searching = s.is_search_loading and s.search_target == LeftFocus.PLAYLISTS
+            subtitle = (
+                "Searching… · Esc back"
+                if searching
+                else f"{_count_noun(len(s.playlist_search_results), 'playlist')} · Esc back"
+            )
+        else:
+            title = "Playlists"
+            subtitle = None
+
         if s.left_focus == LeftFocus.PLAYLISTS:
             title = f"▶ {title}"
         self.border_title = title
+        self.border_subtitle = subtitle
 
         playlists = s.displayed_playlists
         if not playlists:
-            if s.is_showing_playlist_search_results and s.is_search_loading:
+            if (
+                s.is_showing_playlist_search_results
+                and s.is_search_loading
+                and s.search_target == LeftFocus.PLAYLISTS
+            ):
                 self.set_lines(f"{_spinner()} Searching…", None, 0)
             elif s.is_loading_library and not s.is_showing_playlist_search_results:
                 self.set_lines(f"{_spinner()} Loading your playlists…", None, 0)
@@ -254,13 +319,20 @@ class PlaylistsPanel(ListPanel):
                 self.set_lines("No results." if s.is_showing_playlist_search_results else "No playlists yet.", None, 0)
             return
 
+        highlight = f"bold {accent}" if accent else "bold"
         text = Text()
         for i, p in enumerate(playlists):
-            line = f"{p.title}  ({p.track_count})"
-            style = "reverse" if i == s.playlists_selected_index else ""
+            line = Text()
+            if is_search_view:
+                _append_highlighted(line, p.title, s.search_query, highlight)
+                line.append(f"  ({p.track_count})")
+            else:
+                line.append(f"{p.title}  ({p.track_count})")
+            if i == s.playlists_selected_index:
+                line.stylize("reverse")
             if i:
                 text.append("\n")
-            text.append(line, style=style)
+            text.append(line)
 
         self.set_lines(text, s.playlists_selected_index, len(playlists))
 
@@ -268,11 +340,15 @@ class PlaylistsPanel(ListPanel):
         """Enter on a playlist opens it here — its tracks in place of the playlist list, same
         panel — rather than queuing + playing it immediately; Esc goes back to the list."""
         s = self.state
+        # An opened playlist is a normal browse view, not search results — drop the search-mode
+        # badge/border it may have been entered from, and the results subtitle that went with it.
+        self.set_class(False, "search-results")
         playlist = s.viewing_playlist
         title = f"{playlist.title} · Esc: back"
         if s.left_focus == LeftFocus.PLAYLISTS:
             title = f"▶ {title}"
         self.border_title = title
+        self.border_subtitle = None
 
         tracks = s.playlist_view_tracks
         if not tracks:
