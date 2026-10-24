@@ -908,8 +908,8 @@ class MusicApp(App[None]):
         accent = current_theme.accent if current_theme else None
 
         self.query_one(HeaderBar).refresh_content()
-        self.query_one(TracksPanel).refresh_content()
-        self.query_one(PlaylistsPanel).refresh_content()
+        self.query_one(TracksPanel).refresh_content(accent=accent)
+        self.query_one(PlaylistsPanel).refresh_content(accent=accent)
         self.query_one(QueuePanel).refresh_content()
         self.query_one(CoverArtPanel).refresh_content()
         self.query_one(BarVisualizerPanel).refresh_content(color=accent)
