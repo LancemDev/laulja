@@ -21,13 +21,13 @@ class FullScreenMode(Enum):
 
 class WallpaperVisual(Enum):
     """The selectable generative backdrops for wallpaper mode ("w") — cycled with ←/→ while
-    active. SPECTRUM is audio-reactive (it reads AppState.visualizer_levels), so its bars hold
+    active. SPECTRUM is audio-reactive (it reads AppState.visualizer_levels), so its ridge holds
     still while paused; the others are purely time-driven so they keep animating even then."""
 
     SPECTRUM = "spectrum"
-    STARFIELD = "starfield"
-    RAIN = "rain"
-    PLASMA = "plasma"
+    AURORA = "aurora"
+    RIPPLE = "ripple"
+    ORBIT = "orbit"
 
 
 @dataclass
