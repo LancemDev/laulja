@@ -20,6 +20,7 @@ from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
 from . import art_theme
 from .state import AppState, FullScreenMode, LeftFocus, WallpaperVisual
+from .wallpaper import WallpaperPanel
 from .widgets import (
     BarVisualizerPanel,
     CoverArtPanel,
@@ -30,7 +31,6 @@ from .widgets import (
     QueuePanel,
     QuickActionsBar,
     TracksPanel,
-    WallpaperPanel,
 )
 
 _LEFT_FOCUS_CYCLE = [LeftFocus.TRACKS, LeftFocus.QUEUE, LeftFocus.PLAYLISTS]
@@ -320,7 +320,8 @@ class MusicApp(App[None]):
         still_fetching_details = s.now_playing is not None and (s.lyrics is None or s.cover_art is None)
         # Wallpaper visuals are time-driven (see WallpaperPanel) and meant to keep animating even
         # when playback itself hasn't changed (paused, or nothing loaded yet) — repaint every
-        # tick while it's active rather than only on an actual state change.
+        # tick while it's active rather than only on an actual state change. The paused spectrum
+        # short-circuits inside the panel, so this costs almost nothing when it is fully static.
         if (
             before != after
             or s.is_loading_library
@@ -907,6 +908,13 @@ class MusicApp(App[None]):
         current_theme = self.get_theme(self.theme)
         accent = current_theme.accent if current_theme else None
 
+        # Wallpaper mode hides every normal panel. Refreshing them at the full tick rate would
+        # burn CPU on widgets nobody can see — and the wallpaper shader is the expensive part.
+        # When wallpaper mode is switched off, this method runs again and rebuilds the normal UI.
+        if self.state.is_wallpaper_mode:
+            self.query_one(WallpaperPanel).refresh_content(accent=accent)
+            return
+
         self.query_one(HeaderBar).refresh_content()
         self.query_one(TracksPanel).refresh_content(accent=accent)
         self.query_one(PlaylistsPanel).refresh_content(accent=accent)
@@ -917,8 +925,3 @@ class MusicApp(App[None]):
         self.query_one(QuickActionsBar).refresh_content()
         self.query_one(PlayerInfoBar).refresh_content(accent=accent)
         self.query_one("#player-gauge", ProgressBar).update(progress=self.state.progress_ratio * 1000)
-
-        # Skipped when inactive — plasma/spectrum in particular do real per-frame work that'd
-        # otherwise run at the full tick rate for a panel nobody can see.
-        if self.state.is_wallpaper_mode:
-            self.query_one(WallpaperPanel).refresh_content(accent=accent)

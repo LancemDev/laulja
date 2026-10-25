@@ -91,18 +91,20 @@ c          collapse the sidebar
 v          toggle single-view sidebar (one panel at a time, default) vs. stacked (all three)
 m          toggle minimalism (strip panel borders and the hint bar)
 w          wallpaper mode: full-screen ambient visuals, music keeps playing in the background
-             ←/→        cycle visual (spectrum / starfield / rain / plasma) while active
+             ←/→        cycle visual (spectrum / aurora / ripple / orbit) while active
 o          sign out (clears saved cookies — sign in again next launch)
 q          quit
 ```
 
-**Wallpaper mode** (`w`) swaps the whole screen for a generative, lofi-style visual — audio
+**Wallpaper mode** (`w`) swaps the whole screen for a full-color generative scene — audio
 keeps playing exactly as before, just without any of the normal panels on screen. Pick from
-four visuals with `←`/`→`: `spectrum` (mirrored bars driven by the real audio spectrum),
-`starfield`, `rain`, and `plasma` (a chunky, retro color field) — the latter three animate on
-their own even while paused. The spectrum is the one exception: it mirrors the real audio, so
-its bars hold still while a song is paused. Playback controls (`space`, `n`/`p`, `l`) still work
-while it's active; `w` again returns to the normal layout.
+four visuals with `←`/`→`: `spectrum` (a neon sunset whose audio-reactive mountain skyline
+reflects in the water), `aurora` (hanging curtains of light over a dark ridge), `ripple`
+(luminous caustics drifting across deep water), and `orbit` (a ringed planet turning in
+space). Each scene is drawn as truecolor half-blocks, at twice the vertical resolution of
+ordinary terminal art, and tinted from the current cover art. `spectrum` holds its whole frame
+while paused; the other three keep animating. Playback controls (`space`, `n`/`p`, `l`) still
+work while it's active; `w` again returns to the normal layout.
 
 Playing an individual track (library or search) starts a YouTube Music radio/mix seeded from
 it — a continuous queue of similar-vibe songs — rather than just the track alone. A playlist
@@ -210,7 +212,8 @@ laulja/
   ui/
     app.py                  Textual App: layout, keybindings, state sync
     state.py                shared AppState
-    widgets.py              header/tracks/playlists/queue/cover/bar/lyrics/wallpaper panels
+    widgets.py              header/tracks/playlists/queue/cover/bar/lyrics panels
+    wallpaper.py            full-color generative wallpaper renderer and panel
     listing.py              scrollable list panel base class
     art_theme.py            derives the UI color theme from cover art
 ```
