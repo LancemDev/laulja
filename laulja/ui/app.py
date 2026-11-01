@@ -420,8 +420,9 @@ class MusicApp(App[None]):
 
         if event.key == "escape":
             if s.viewing_playlist is not None:
+                from_album = s.playlist_view_return_focus is not None
                 self._close_playlist_view()
-                s.status_message = "Back to playlists"
+                s.status_message = "Back to results" if from_album else "Back to playlists"
                 self.refresh_all()
                 return
             if s.is_showing_search_results or s.is_showing_playlist_search_results:
@@ -616,7 +617,9 @@ class MusicApp(App[None]):
                 if request_id != self._search_request_id:
                     return
                 s.search_results = results.tracks
-                s.status_message = f"{len(results.tracks)} track(s)" + (
+                albums = sum(1 for t in results.tracks if t.is_album)
+                songs = len(results.tracks) - albums
+                s.status_message = f"{songs} song(s) · {albums} album(s)" + (
                     f" · {results.hidden} hidden by blocklist" if results.hidden else ""
                 )
         except Exception as ex:
@@ -720,11 +723,36 @@ class MusicApp(App[None]):
         s.playlist_view_selected_index = 0
         s.status_message = f"{len(tracks)} track(s)" if tracks else "Playlist is empty"
 
+    async def _open_album(self, album: Track) -> None:
+        """Opens an album search result in the Playlists panel's browse view — the same
+        "pick a track to play the whole thing from there" view playlists use. Esc returns to
+        the search results it was opened from."""
+        s = self.state
+        try:
+            tracks = await self._music.get_album_tracks(album.id)
+        except Exception as ex:
+            s.status_message = f"Couldn't open album: {ex}"
+            return
+
+        s.viewing_playlist = Playlist(
+            id=album.id, title=album.title, description=album.artist, track_count=len(tracks), is_album=True
+        )
+        s.playlist_view_tracks = tracks
+        s.playlist_view_selected_index = 0
+        s.playlist_view_return_focus = s.left_focus
+        s.left_focus = LeftFocus.PLAYLISTS
+        self._apply_layout()
+        s.status_message = f"{album.title} · {len(tracks)} track(s)" if tracks else "Album is empty"
+
     def _close_playlist_view(self) -> None:
         s = self.state
         s.viewing_playlist = None
         s.playlist_view_tracks = []
         s.playlist_view_selected_index = 0
+        if s.playlist_view_return_focus is not None:
+            s.left_focus = s.playlist_view_return_focus
+            s.playlist_view_return_focus = None
+            self._apply_layout()
 
     async def _play_selection(self) -> None:
         s = self.state
@@ -749,10 +777,15 @@ class MusicApp(App[None]):
                 s.status_message = "Nothing to play"
                 return
 
+            selected = tracks[s.tracks_selected_index]
+            if selected.is_album:
+                await self._open_album(selected)
+                return
+
             # Start a radio/mix seeded from the picked track rather than just queuing the
             # library/search list as-is — matches YouTube Music's own behavior of playing
             # similar-vibe songs after whatever you selected.
-            await self._player.play_track_radio(tracks[s.tracks_selected_index])
+            await self._player.play_track_radio(selected)
 
         self._sync_player_state()
         s.status_message = self._player.last_error or (

@@ -80,6 +80,8 @@ class AppState:
     viewing_playlist: Optional[Playlist] = None
     playlist_view_tracks: List[Track] = field(default_factory=list)
     playlist_view_selected_index: int = 0
+    # Set when the view was opened from an album search result, so Esc returns there.
+    playlist_view_return_focus: Optional[LeftFocus] = None
 
     now_playing: Optional[Track] = None
     is_playing: bool = False

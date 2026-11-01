@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import tempfile
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
@@ -99,6 +101,65 @@ def _to_playlist(item: Dict[str, Any]) -> Optional[Playlist]:
     )
 
 
+def _to_album(item: Dict[str, Any]) -> Optional[Track]:
+    browse_id = item.get("browseId")
+    if not browse_id:
+        return None
+    artists = _artist_refs(item.get("artists"))
+    title = item.get("title") or "Untitled"
+    return Track(
+        id=browse_id,
+        title=title,
+        artist=", ".join(a.name for a in artists) if artists else "Unknown Artist",
+        artists=artists,
+        album=title,
+        thumbnail_url=_thumbnail(item.get("thumbnails")),
+        is_album=True,
+    )
+
+
+def _words(text: str) -> List[str]:
+    return re.findall(r"[0-9a-z]+", text.casefold())
+
+
+def _match_score(query: str, item: Track) -> int:
+    """How well a result fits the query, comparing the title (and title + artist) word-wise:
+    an exact title match beats the query appearing inside the title, which beats merely
+    containing every query word somewhere across title and artist."""
+    q = _words(query)
+    if not q:
+        return 0
+    title = _words(item.title)
+    full = title + _words(item.artist)
+    if title == q or full == q:
+        return 4
+    joined_q, joined_title = " ".join(q), " ".join(title)
+    if joined_title.startswith(joined_q):
+        return 3
+    if joined_q in joined_title or joined_q in " ".join(full):
+        return 2
+    if set(q) <= set(full):
+        return 1
+    return 0
+
+
+def _rank_results(
+    query: str, songs: List[Track], albums: List[Track], top: Optional[Track]
+) -> List[Track]:
+    """Merges songs and albums into one list ordered by best fit. YouTube Music's own "top
+    result" goes first; the rest are sorted by match score, with ties broken by each item's
+    position within its own (already relevance-ordered) list so neither kind floods the top."""
+    ranked = sorted(
+        [(t, i / max(len(songs), 1)) for i, t in enumerate(songs)]
+        + [(a, i / max(len(albums), 1)) for i, a in enumerate(albums)],
+        key=lambda pair: (-_match_score(query, pair[0]), pair[1]),
+    )
+    merged = [t for t, _ in ranked]
+    if top is not None:
+        merged = [top] + [t for t in merged if t.id != top.id]
+    return merged
+
+
 class MusicService:
     """Thin async wrapper around ytmusicapi — a blocking library run in worker threads."""
 
@@ -127,15 +188,56 @@ class MusicService:
         ]
 
     async def search(self, query: str) -> SearchResults:
-        results = await asyncio.to_thread(self._client.search, query, "songs", None, 25)
-        tracks = [t for t in (_to_track(r) for r in results) if t is not None]
-        tracks, hidden = self._apply_blocklist(tracks)
-        return SearchResults(tracks=tracks[:25], hidden=hidden)
+        """Songs and albums in one list, best fit first (see _rank_results)."""
+        song_results, album_results, top_results = await asyncio.gather(
+            asyncio.to_thread(self._client.search, query, "songs", None, 25),
+            asyncio.to_thread(self._client.search, query, "albums", None, 10),
+            asyncio.to_thread(self._client.search, query, None, None, 1),
+        )
+        songs = [t for t in (_to_track(r) for r in song_results) if t is not None]
+        # Only the first few: past those, album search is mostly same-titled knock-offs and
+        # compilations that would otherwise tie with (and bury) the real songs.
+        albums = [a for a in (_to_album(r) for r in album_results) if a is not None][:3]
+        top = self._top_result(top_results)
+        merged = _rank_results(query, songs[:25], albums, top)
+        tracks, hidden = self._apply_blocklist(merged)
+        return SearchResults(tracks=tracks, hidden=hidden)
+
+    @staticmethod
+    def _top_result(results: List[Dict[str, Any]]) -> Optional[Track]:
+        for r in results:
+            if r.get("category") != "Top result":
+                continue
+            if r.get("resultType") == "song":
+                return _to_track(r)
+            if r.get("resultType") == "album":
+                return _to_album(r)
+            return None
+        return None
 
     async def search_playlists(self, query: str) -> List[Playlist]:
         results = await asyncio.to_thread(self._client.search, query, "playlists", None, 25)
         playlists = [p for p in (_to_playlist(r) for r in results) if p is not None]
         return playlists[:25]
+
+    async def get_album_tracks(self, browse_id: str) -> List[Track]:
+        album = await asyncio.to_thread(self._client.get_album, browse_id)
+        title = album.get("title")
+        # Album track entries carry no artwork of their own; use the album cover.
+        cover = _thumbnail(album.get("thumbnails"))
+        tracks = []
+        for item in album.get("tracks", []):
+            track = _to_track(item)
+            if track is None:
+                continue
+            tracks.append(
+                replace(
+                    track,
+                    album=track.album or title,
+                    thumbnail_url=track.thumbnail_url or cover,
+                )
+            )
+        return tracks
 
     async def get_playlist_tracks(self, playlist_id: str) -> List[Track]:
         playlist = await asyncio.to_thread(self._client.get_playlist, playlist_id, None)

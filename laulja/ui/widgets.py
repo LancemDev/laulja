@@ -226,7 +226,7 @@ class TracksPanel(ListPanel):
             subtitle = (
                 "Searching… · Esc back"
                 if searching
-                else f"{_count_noun(len(s.search_results), 'track')} · Esc back"
+                else f"{_count_noun(len(s.search_results), 'result')} · Esc back"
             )
         else:
             title = "Tracks · Library"
@@ -248,11 +248,21 @@ class TracksPanel(ListPanel):
             return
 
         highlight = f"bold {accent}" if accent else "bold"
+        album_style = f"bold {accent}" if accent else "bold magenta"
         text = Text()
         for i, t in enumerate(tracks):
             marker = "♪ " if s.now_playing and s.now_playing.id == t.id else "  "
             line = Text(marker)
-            if is_search_view:
+            if t.is_album:
+                # Albums sit in the same ranked list as songs; a disc glyph, italics and an
+                # ALBUM tag (where songs show a duration) keep them distinguishable at a glance.
+                line = Text("◉ ", style=album_style)
+                _append_highlighted(line, t.title, s.search_query, highlight)
+                line.append("  ·  ")
+                _append_highlighted(line, t.artist, s.search_query, highlight)
+                line.stylize("italic")
+                line.append("  ALBUM", style=album_style)
+            elif is_search_view:
                 _append_highlighted(line, t.title, s.search_query, highlight)
                 line.append("  ·  ")
                 _append_highlighted(line, t.artist, s.search_query, highlight)
