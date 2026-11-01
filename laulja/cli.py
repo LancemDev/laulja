@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from . import console as out
 from .auth.browser_flow import BrowserAuthFlow
+from .console import console
 from .auth.service import AuthService
 from .auth.session import AuthSession
 from .config import AppConfig
@@ -25,7 +27,8 @@ async def _with_spinner(message: str, awaitable):
     async def spin() -> None:
         i = 0
         while True:
-            print(f"\r{_SPINNER_FRAMES[i % len(_SPINNER_FRAMES)]} {message}", end="", flush=True)
+            frame = out.spinner_frame(_SPINNER_FRAMES[i % len(_SPINNER_FRAMES)], message)
+            print(f"\r{frame}", end="", flush=True)
             i += 1
             await asyncio.sleep(0.1)
 
@@ -38,7 +41,7 @@ async def _with_spinner(message: str, awaitable):
             await spin_task
         except asyncio.CancelledError:
             pass
-        print("\r" + " " * (len(message) + 2) + "\r", end="", flush=True)
+        print("\r" + " " * (len(message) + 4) + "\r", end="", flush=True)
 
 
 def main() -> None:
@@ -60,6 +63,7 @@ def main() -> None:
 
 
 async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
+    out.banner()
     session = await _ensure_authenticated(auth_service, config, force_login=False)
 
     from ytmusicapi import YTMusic
@@ -96,10 +100,11 @@ async def _ensure_authenticated(
             return existing
 
         if not config.prompt_login_on_startup:
-            print(f"Starting without auth ({existing.status_label}): {existing.status_detail}")
+            out.warn(f"Starting without auth ({existing.status_label}): {existing.status_detail}")
             return existing
 
-        print(f"Not authenticated ({existing.status_label}). Starting browser sign-in…")
+        out.warn(f"Not signed in ({existing.status_label}). Let's get you set up.")
+        console.print()
 
     flow = BrowserAuthFlow(auth)
     return await flow.run()
@@ -109,12 +114,14 @@ async def _run_cli(args: list[str], auth: AuthService, config: AppConfig) -> int
     command = args[0]
 
     if command in ("--login", "login"):
+        out.banner("sign in")
         try:
             session = await _ensure_authenticated(auth, config, force_login=True)
             _print_session(session)
             return 0 if session.is_authenticated else 1
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            print("Login cancelled.", file=sys.stderr)
+        except (KeyboardInterrupt, asyncio.CancelledError, EOFError):
+            console.print()
+            out.error("Login cancelled.")
             return 130
 
     if command in ("--auth-status", "auth-status"):
@@ -170,13 +177,13 @@ async def _run_cli(args: list[str], auth: AuthService, config: AppConfig) -> int
 
 
 def _print_session(session: AuthSession) -> None:
-    print(f"Status:   {session.status_label}")
-    print(f"Detail:   {session.status_detail}")
-    print(f"Cookies:  {session.cookies_path}")
-    print(f"Count:    {len(session.cookies)}")
-    print(f"Geo:      {session.geographical_location}")
-    print(f"Visitor:  {'(none)' if not session.visitor_data else 'set'}")
-    print(f"PoToken:  {'(none)' if not session.po_token else 'set'}")
+    out.key_value("Status", session.status_label)
+    out.key_value("Detail", session.status_detail)
+    out.key_value("Cookies", str(session.cookies_path))
+    out.key_value("Count", str(len(session.cookies)))
+    out.key_value("Geo", session.geographical_location)
+    out.key_value("Visitor", "(none)" if not session.visitor_data else "set")
+    out.key_value("PoToken", "(none)" if not session.po_token else "set")
 
 
 def _print_help() -> None:

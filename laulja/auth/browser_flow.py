@@ -6,6 +6,8 @@ import subprocess
 import webbrowser
 from typing import Optional
 
+from .. import console as out
+from ..console import console
 from . import browser_cookies
 from .service import AuthService
 from .session import AuthSession
@@ -48,7 +50,7 @@ def open_browser(url: str) -> None:
             except Exception:
                 continue
 
-    print(f"Open this URL manually: {url}")
+    out.warn(f"Couldn't open a browser — open this URL manually: {url}")
 
 
 class BrowserAuthFlow:
@@ -56,32 +58,34 @@ class BrowserAuthFlow:
         self._auth = auth
 
     async def run(self) -> AuthSession:
-        print()
-        print("Authentication required for YouTube Music.")
-        print("Press Enter to open YouTube Music in your browser…")
-        await _wait_for_enter()
+        out.step(1, 3, "Open YouTube Music")
+        out.hint("You need to sign in to YouTube Music.")
+        await _prompt("Press Enter to open it in your browser… ")
 
         open_browser(SIGN_IN_URL)
 
-        print()
-        print("Sign in there if prompted, then make sure the tab lands on music.youtube.com.")
-        print("Press Enter here once you're signed in…")
-        await _wait_for_enter()
+        console.print()
+        out.step(2, 3, "Sign in")
+        out.hint("Sign in if prompted, and make sure the tab lands on music.youtube.com.")
+        await _prompt("Press Enter here once you're signed in… ")
 
-        print("Looking for your session in Chrome, Chromium, Brave, Edge, and Firefox…")
+        console.print()
+        out.step(3, 3, "Connect your session")
+        out.info("Looking for your session in Chrome, Chromium, Brave, Edge, and Firefox…")
         detected, source = await asyncio.to_thread(browser_cookies.try_read_youtube_cookies)
 
         imported: Optional[AuthSession] = None
         if detected:
             try:
-                print(f"Found a signed-in session via {source}.")
+                out.success(f"Found a signed-in session via {source}")
                 imported = self._auth.save_cookies(detected)
             except Exception as ex:
-                print(f"Auto-detected session looked invalid: {ex}")
+                out.warn(f"Auto-detected session looked invalid: {ex}")
 
         if imported is None:
-            print("" if detected else "Couldn't auto-detect a session from your browsers.")
-            print(
+            if not detected:
+                out.warn("Couldn't auto-detect a session from your browsers.")
+            out.hint(
                 "Open DevTools (F12) → Network → any music.youtube.com request → "
                 "copy the 'Cookie' request header."
             )
@@ -92,27 +96,23 @@ class BrowserAuthFlow:
                     imported = self._auth.save_cookies_from_header(header or "")
                     break
                 except Exception as ex:
-                    print(f"{ex} Try again.")
+                    out.error(f"{ex} Try again.")
 
         if imported is None:
-            print("Giving up after repeated invalid input.")
+            out.error("Giving up after repeated invalid input.")
             return self._auth.load()
 
-        print("Validating with YouTube Music…")
+        out.info("Validating with YouTube Music…")
         validated = await asyncio.to_thread(self._auth.validate, imported)
 
-        print(
-            "Signed in."
-            if validated.is_authenticated
-            else f"Sign-in saved but validation failed: {validated.status_detail}"
-        )
+        if validated.is_authenticated:
+            out.success("Signed in")
+        else:
+            out.warn(f"Sign-in saved but validation failed: {validated.status_detail}")
+        console.print()
 
         return validated
 
 
-async def _wait_for_enter() -> None:
-    await asyncio.to_thread(input)
-
-
 async def _prompt(message: str) -> str:
-    return await asyncio.to_thread(input, message)
+    return await asyncio.to_thread(input, out.prompt_text(message))
