@@ -226,7 +226,7 @@ class TracksPanel(ListPanel):
             subtitle = (
                 "Searching… · Esc back"
                 if searching
-                else f"{_count_noun(len(s.search_results), 'track')} · Esc back"
+                else f"{_count_noun(len(s.search_results), 'result')} · Esc back"
             )
         else:
             title = "Tracks · Library"
@@ -248,11 +248,21 @@ class TracksPanel(ListPanel):
             return
 
         highlight = f"bold {accent}" if accent else "bold"
+        album_style = f"bold {accent}" if accent else "bold magenta"
         text = Text()
         for i, t in enumerate(tracks):
             marker = "♪ " if s.now_playing and s.now_playing.id == t.id else "  "
             line = Text(marker)
-            if is_search_view:
+            if t.is_album:
+                # Albums sit in the same ranked list as songs; a disc glyph, italics and an
+                # ALBUM tag (where songs show a duration) keep them distinguishable at a glance.
+                line = Text("◉ ", style=album_style)
+                _append_highlighted(line, t.title, s.search_query, highlight)
+                line.append("  ·  ")
+                _append_highlighted(line, t.artist, s.search_query, highlight)
+                line.stylize("italic")
+                line.append("  ALBUM", style=album_style)
+            elif is_search_view:
                 _append_highlighted(line, t.title, s.search_query, highlight)
                 line.append("  ·  ")
                 _append_highlighted(line, t.artist, s.search_query, highlight)
@@ -761,6 +771,38 @@ class PlayerInfoBar(Static):
             display.append(padded[:filled], style=fill_style)
         display.append(padded[filled:])
         self.update(display)
+
+
+_KEY_ACTIONS = [
+    ("Tab", "focus"),
+    ("j/k", "move"),
+    ("Enter", "play"),
+    ("Space", "pause"),
+    ("n/p", "next/prev"),
+    ("l", "like"),
+    ("b", "block artist"),
+    ("/", "search"),
+    ("f", "fullscreen"),
+    ("c", "collapse"),
+    ("v", "single view"),
+    ("m", "minimal"),
+    ("w", "wallpaper"),
+    ("o", "sign out"),
+    ("q", "quit"),
+]
+
+# "x remove" only does anything with the Queue panel focused, so it's spliced into the hint bar
+# there instead of always showing — matches _KEY_ACTIONS' own position for where it'd otherwise
+# sit, right after next/prev.
+_QUEUE_REMOVE_ACTION = ("x", "remove")
+
+# "←/→ switch panel" only means anything once single-view ("v") is on — the sidebar's three
+# panels are all visible at once otherwise, so there's nothing to switch between.
+_PAGED_NAV_ACTION = ("←/→", "switch panel")
+
+# Shown instead of "Enter open" once a playlist is actually open for browsing — matches
+# _KEY_ACTIONS' own position, right after Enter.
+_PLAYLIST_BACK_ACTION = ("Esc", "back")
 
 
 class QuickActionsBar(Static):

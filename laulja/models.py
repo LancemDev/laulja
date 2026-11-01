@@ -22,6 +22,9 @@ class Track:
     thumbnail_url: Optional[str] = None
     # The individual artists behind the joined `artist` display string.
     artists: Tuple[ArtistRef, ...] = ()
+    # Set when this search-result entry is an album rather than a song: `id` is then the
+    # album's browseId ("MPREb_…"), and Enter opens it instead of playing it.
+    is_album: bool = False
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,8 @@ class Playlist:
     title: str
     description: Optional[str] = None
     track_count: int = 0
+    # Albums share the playlist list/view; `id` is then the album's browseId ("MPREb_…").
+    is_album: bool = False
 
 
 @dataclass(frozen=True)
