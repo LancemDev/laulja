@@ -773,6 +773,38 @@ class PlayerInfoBar(Static):
         self.update(display)
 
 
+_KEY_ACTIONS = [
+    ("Tab", "focus"),
+    ("j/k", "move"),
+    ("Enter", "play"),
+    ("Space", "pause"),
+    ("n/p", "next/prev"),
+    ("l", "like"),
+    ("b", "block artist"),
+    ("/", "search"),
+    ("f", "fullscreen"),
+    ("c", "collapse"),
+    ("v", "single view"),
+    ("m", "minimal"),
+    ("w", "wallpaper"),
+    ("o", "sign out"),
+    ("q", "quit"),
+]
+
+# "x remove" only does anything with the Queue panel focused, so it's spliced into the hint bar
+# there instead of always showing — matches _KEY_ACTIONS' own position for where it'd otherwise
+# sit, right after next/prev.
+_QUEUE_REMOVE_ACTION = ("x", "remove")
+
+# "←/→ switch panel" only means anything once single-view ("v") is on — the sidebar's three
+# panels are all visible at once otherwise, so there's nothing to switch between.
+_PAGED_NAV_ACTION = ("←/→", "switch panel")
+
+# Shown instead of "Enter open" once a playlist is actually open for browsing — matches
+# _KEY_ACTIONS' own position, right after Enter.
+_PLAYLIST_BACK_ACTION = ("Esc", "back")
+
+
 class QuickActionsBar(Static):
     def __init__(self, state: AppState, **kwargs) -> None:
         super().__init__(**kwargs)
