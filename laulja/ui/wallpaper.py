@@ -45,7 +45,7 @@ RGB = Tuple[int, int, int]
 _PALETTE_COLORS = 128
 _FRAME_INTERVAL = 0.10  # ~10fps; these are ambient visuals, not a twitch shooter
 _MERGE_MIN = 2
-_MERGE_DISTANCE = 40.0
+_MERGE_DISTANCE = 16.0
 _BRIGHT_KEEP = 165.0
 _MAX_QUANTIZERS = 8
 
@@ -175,8 +175,8 @@ class _Mood:
         self.hot = _hsv(h + 0.015, 0.46, 1.0)
         self.cream = _mix(self.hot, (255.0, 255.0, 255.0), 0.62)
         self.ember = _hsv(h - 0.025, 0.72, 0.82)
-        self.deep = _hsv(h + 0.62, 0.58, 0.028)
-        self.mid = _hsv(h + 0.57, 0.58, 0.075)
+        self.deep = _hsv(h + 0.62, 0.58, 0.06)
+        self.mid = _hsv(h + 0.57, 0.58, 0.14)
         self.cool = _hsv(h + 0.50, 0.58, 0.76)
         self.teal = _hsv(h + 0.36, 0.62, 0.82)
         self.violet = _hsv(h + 0.64, 0.56, 0.68)
@@ -311,6 +311,8 @@ class WallpaperRenderer:
         mood = _Mood(accent)
         pixel_rows = rows * 2
         pixels = self._render_pixels(state, cols, pixel_rows, now, mood, visual)
+        # Soften hard pixel edges so shapes read as smooth forms rather than jagged stair-steps.
+        pixels = pixels * 0.6 + _blur3(pixels, 1) * 0.4
         quantizer = self._quantizer(visual, accent, pixels)
         indices = quantizer.indices(pixels)
         segments = self._pixel_segments(indices, cols, rows, quantizer)
@@ -635,15 +637,7 @@ class WallpaperRenderer:
                 rays += amplitude * np.exp(-(((xn - center) / beam_width) ** 2))
             rays = np.clip(rays, 0.0, 1.5)
 
-            fine = 0.86 + 0.14 * (
-                0.5
-                + 0.5
-                * np.sin(
-                    xn * math.tau * 43
-                    + 2.0 * np.sin(xn * math.tau * 2.0 + when * 0.2)
-                    + when * 0.8
-                )
-            )
+            fine = 1.0
             envelope = 0.60 + 0.40 * (
                 0.5
                 + 0.5
@@ -751,14 +745,11 @@ class WallpaperRenderer:
 
         gy, gx = np.gradient(field)
         grad = np.maximum(np.abs(gx), np.abs(gy))
-        for level, strength in ((0.0, 0.82), (0.72, 0.28), (-0.72, 0.20)):
-            line = np.abs(field - level) < 0.55 * grad
-            line_color = _mix(
-                mood.teal,
-                mood.cream,
-                0.55 if strength > 0.4 else 0.30,
-            )
-            pixels[line] = _mix(pixels[line], line_color, strength)
+        # Soft glowing contour instead of a 1px etched line, which aliases into jagged stairs.
+        grad = np.maximum(grad, 1e-4)
+        line = np.exp(-((field / (1.6 * grad)) ** 2))
+        line_color = _mix(mood.teal, mood.cream, 0.55)
+        pixels = _mix(pixels, line_color[None, None, :], (0.75 * line)[..., None])
 
         # Deterministic sparkle instead of random(), so glints travel rather than flicker.
         sparkle_hash = np.sin(xx * 12.9898 + yy * 78.233 + when * 2.0) * 43758.5453
@@ -877,9 +868,6 @@ class WallpaperRenderer:
         ) * edge
         density *= 1.0 - 0.88 * np.exp(-(((ring_e - 1.47) / 0.040) ** 2))
         density *= 1.0 - 0.65 * np.exp(-(((ring_e - 1.83) / 0.035) ** 2))
-        density *= 0.90 + 0.10 * (
-            0.5 + 0.5 * np.sin(ring_e * 55.0 + when * 0.50)
-        )
         ring_base = _mix(mood.cool, mood.cream, 0.45)
         ring_warm = _mix(mood.accent, mood.cream, 0.35)
         ring_color = ring_base[None, None, :] + (
@@ -1000,8 +988,12 @@ class WallpaperRenderer:
         if segments:
             segments.append(Segment("\n"))
 
+        liked = (
+            state.now_playing is not None
+            and state.now_playing.id in state.liked_track_ids
+        )
         title = (
-            f"♪  {state.now_playing.title} — {state.now_playing.artist}"
+            f"{'♥' if liked else '♪'}  {state.now_playing.title} — {state.now_playing.artist}"
             if state.now_playing is not None
             else "Wallpaper mode  ·  nothing playing"
         )
@@ -1025,7 +1017,8 @@ class WallpaperRenderer:
             segments.append(Segment("\n"))
             hint = (
                 f"w exit  ·  ←/→ {visual.value}  ·  "
-                f"space {'pause' if state.is_playing else 'play'}"
+                f"space {'pause' if state.is_playing else 'play'}  ·  "
+                f"l {'unlike' if liked else 'like'}"
             )
             hint_bg = backgrounds[-1]
             hint_style = fg_style(hint_fg, hint_bg)
@@ -1078,7 +1071,8 @@ class WallpaperRenderer:
         hint_bg = backgrounds[-1]
         hint = (
             f"w exit  ·  ←/→ visual: {visual.value}  ·  "
-            f"space {'pause' if state.is_playing else 'play'}  ·  n/p skip"
+            f"space {'pause' if state.is_playing else 'play'}  ·  "
+            f"l {'unlike' if liked else 'like'}  ·  n/p skip"
         )
         hint_style = fg_style(hint_fg, hint_bg)
         segments.extend(
@@ -1138,6 +1132,7 @@ class WallpaperPanel(Widget):
                 round(float(s.position_seconds), 3),
                 round(float(s.duration_seconds), 3),
                 tuple(s.visualizer_levels),
+                s.now_playing.id in s.liked_track_ids,
             )
         return None
 
