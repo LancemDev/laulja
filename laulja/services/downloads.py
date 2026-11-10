@@ -105,10 +105,13 @@ class DownloadService:
         downloaded: Optional[Path] = None
         try:
             runtimes = _available_js_runtimes()
+            # Strictly audio-only: no /best fallback, which can pull a video stream
+            # (WebM video) when a pure audio format isn't available. Prefer m4a/aac
+            # (universally playable, never mistaken for video) over webm.
             opts: Dict[str, Any] = {
                 "quiet": True,
                 "no_warnings": True,
-                "format": "bestaudio/best",
+                "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
                 "noplaylist": True,
                 "outtmpl": str(stem) + ".%(ext)s",
             }
