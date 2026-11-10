@@ -753,7 +753,11 @@ class PlayerInfoBar(Static):
         if s.now_playing:
             liked = " ♥" if s.now_playing.id in s.liked_track_ids else ""
             buffering = "  · buffering…" if s.is_buffering else ""
-            if s.download_active_count:
+            # Progress for the current track if it's being downloaded right now.
+            progress = s.track_download_progress(s.now_playing.id)
+            if progress > 0.0 and progress < 1.0:
+                download = f"  ↓{int(progress * 100)}%"
+            elif s.download_active_count:
                 download = f"  ↓{s.download_active_count}"
             elif s.download_count:
                 download = f"  ✓{s.download_count}"

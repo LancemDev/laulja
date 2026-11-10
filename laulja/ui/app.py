@@ -316,6 +316,7 @@ class MusicApp(App[None]):
             s.status_message = self._player.notice
             self._player.notice = None
         self._sync_player_state()
+        self._sync_download_state()
         after = (s.position_seconds, s.is_playing, s.now_playing.id if s.now_playing else None)
         # Also repaint on nothing-changed ticks whenever something's still loading, so its
         # spinner actually animates instead of sitting on whatever frame it last happened to
@@ -332,6 +333,7 @@ class MusicApp(App[None]):
             or s.is_wallpaper_mode
             or s.is_buffering
             or s.is_search_loading
+            or s.download_active_count
         ):
             self.refresh_all()
 
@@ -355,6 +357,27 @@ class MusicApp(App[None]):
         if new_id != previous_id:
             self._trigger_lyrics_fetch(s.now_playing)
             self._trigger_cover_art_fetch(s.now_playing)
+
+    def _sync_download_state(self) -> None:
+        """Pull per-track progress/status from DownloadService into AppState so the UI can show
+        live download indicators during a tick."""
+        s = self.state
+        # Refresh every track we know is being downloaded.
+        track_ids = list(s.downloading_track_ids)
+        for track_id in track_ids:
+            progress = self._downloads.get_progress(track_id)
+            status = self._downloads.get_status(track_id)
+            s.download_progress[track_id] = progress
+            if status == "done":
+                s.downloading_track_ids.discard(track_id)
+                s.download_progress.pop(track_id, None)
+                s.download_errors.pop(track_id, None)
+            elif status == "failed":
+                s.downloading_track_ids.discard(track_id)
+                s.download_progress.pop(track_id, None)
+                err = s.download_errors.get(track_id)
+                if not err:
+                    s.download_errors[track_id] = "Download failed"
 
     def _trigger_lyrics_fetch(self, track: Optional[Track]) -> None:
         self.state.lyrics = None
