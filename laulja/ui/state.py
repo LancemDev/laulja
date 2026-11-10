@@ -102,8 +102,10 @@ class AppState:
     # playback. Populated optimistically as downloads complete; a restart treats everything as
     # not downloaded (files are re-detected lazily when played).
     downloaded_track_ids: Set[str] = field(default_factory=set)
-    # Tracks currently being downloaded (one at a time, queued otherwise).
+    # Tracks currently being downloaded or queued for download.
     downloading_track_ids: Set[str] = field(default_factory=set)
+    # Per-track download progress, 0.0–1.0, synced from DownloadService on each tick.
+    download_progress: Dict[str, float] = field(default_factory=dict)
     # Last error per track id, shown so a failed download is visible rather than silent.
     download_errors: Dict[str, str] = field(default_factory=dict)
 
@@ -114,14 +116,25 @@ class AppState:
 
     @property
     def download_active_count(self) -> int:
-        """Tracks being downloaded right now (at most one, but counted for symmetry)."""
+        """Tracks being downloaded right now."""
         return len(self.downloading_track_ids)
+
+    @property
+    def download_queued_count(self) -> int:
+        """Tracks waiting for a download slot (active_count + queued_count from the service)."""
+        return len(self.downloading_track_ids) - sum(
+            1 for p in self.download_progress.values() if p >= 1.0
+        )
 
     def is_track_downloaded(self, track_id: str) -> bool:
         return track_id in self.downloaded_track_ids
 
     def is_track_downloading(self, track_id: str) -> bool:
         return track_id in self.downloading_track_ids
+
+    def track_download_progress(self, track_id: str) -> float:
+        """Download progress for `track_id`, 0.0–1.0."""
+        return self.download_progress.get(track_id, 0.0)
 
     auth_label: str = "not signed in"
     is_authenticated: bool = False
