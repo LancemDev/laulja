@@ -13,6 +13,7 @@ import asyncio
 import os
 import re
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -97,12 +98,9 @@ class DownloadService:
 
     def _download_file(self, track: Track) -> Path:
         base = self._dir / self.base_name(track)
-        # yt-dlp names the file itself; we hand it a temp stem without an extension so it adds
-        # the real one (.m4a, .webm, …), then we rename to "<title> - <artist>.<ext>".
-        fd, temp_path = tempfile.mkstemp(dir=self._dir, prefix=".laulja-dl-", suffix=".part")
-        os.close(fd)
-        temp = Path(temp_path)
-        stem = temp.with_suffix("")  # strip ".part" — yt-dlp appends the real ext
+        # Unique temp stem — no file is created here, so the post-download glob only
+        # finds what yt-dlp actually wrote (no empty .part file to confuse it).
+        stem = self._dir / f".laulja-dl-{uuid.uuid4().hex}"
         cookie_path = self._write_cookies()
         downloaded: Optional[Path] = None
         try:
@@ -112,7 +110,7 @@ class DownloadService:
                 "no_warnings": True,
                 "format": "bestaudio/best",
                 "noplaylist": True,
-                "outtmpl": str(stem),
+                "outtmpl": str(stem) + ".%(ext)s",
             }
             if runtimes:
                 opts["js_runtimes"] = runtimes
@@ -128,12 +126,10 @@ class DownloadService:
             if final.exists():
                 final.unlink()
             downloaded.rename(final)
+            if not final.exists():
+                raise RuntimeError(f"Download did not produce {final}.")
             return final
         finally:
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
             if downloaded is not None:
                 for extra in self._dir.glob(stem.name + ".*"):
                     if extra != downloaded:
