@@ -848,10 +848,9 @@ class MusicApp(App[None]):
             s.status_message = f"Unliked {track.title}"
 
     def _download_target(self) -> Optional[Track]:
-        """The track 'd' downloads: the current song, falling back to the focused selection."""
+        """The track 'd' downloads: the cursor/selection first, falling back to the current song."""
         s = self.state
-        if s.now_playing is not None:
-            return s.now_playing
+        # Cursor/selection first — download wherever the cursor is.
         if s.left_focus == LeftFocus.TRACKS and s.displayed_tracks:
             return s.displayed_tracks[s.tracks_selected_index]
         if s.left_focus == LeftFocus.QUEUE and s.queue:
@@ -862,6 +861,9 @@ class MusicApp(App[None]):
             and s.playlist_view_tracks
         ):
             return s.playlist_view_tracks[s.playlist_view_selected_index]
+        # Fall back to the current song when nothing is selected.
+        if s.now_playing is not None:
+            return s.now_playing
         return None
 
     async def _download_selection(self) -> None:
