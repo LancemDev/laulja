@@ -16,6 +16,7 @@ from ..models import Playlist, Track
 from ..services.audio.player import AudioPlayerService
 from ..services.blocklist import ArtistBlocklist, BlockChange
 from ..services.cover_art_service import CoverArtService
+from ..services.downloads import DownloadService
 from ..services.lyrics_service import LyricsService
 from ..services.music_service import MusicService
 from . import art_theme
@@ -196,6 +197,7 @@ class MusicApp(App[None]):
         auth: AuthSession,
         auth_service: AuthService,
         blocklist: ArtistBlocklist,
+        download_service: DownloadService,
     ) -> None:
         super().__init__()
         self._config = config
@@ -206,6 +208,7 @@ class MusicApp(App[None]):
         self._auth = auth
         self._auth_service = auth_service
         self._blocklist = blocklist
+        self._downloads = download_service
         # What "u" undoes — only the most recent block from this session.
         self._last_blocked: Optional[BlockChange] = None
         self.state = AppState(is_authenticated=auth.is_authenticated, auth_label=auth.status_label)
@@ -539,6 +542,10 @@ class MusicApp(App[None]):
             self._launch(self._toggle_like(), loading="Updating rating…")
             return
 
+        if event.key == "d":
+            self._launch(self._download_selection(), loading="Downloading…")
+            return
+
         if event.key == "b":
             self._launch(self._block_current_artist(), loading="Blocking artist…")
             return
@@ -839,6 +846,49 @@ class MusicApp(App[None]):
         else:
             s.liked_track_ids.discard(track.id)
             s.status_message = f"Unliked {track.title}"
+
+    def _download_target(self) -> Optional[Track]:
+        """The track 'd' downloads: the current song, falling back to the focused selection."""
+        s = self.state
+        if s.now_playing is not None:
+            return s.now_playing
+        if s.left_focus == LeftFocus.TRACKS and s.displayed_tracks:
+            return s.displayed_tracks[s.tracks_selected_index]
+        if s.left_focus == LeftFocus.QUEUE and s.queue:
+            return s.queue[s.queue_selected_index]
+        if (
+            s.left_focus == LeftFocus.PLAYLISTS
+            and s.viewing_playlist is not None
+            and s.playlist_view_tracks
+        ):
+            return s.playlist_view_tracks[s.playlist_view_selected_index]
+        return None
+
+    async def _download_selection(self) -> None:
+        s = self.state
+        track = self._download_target()
+        if track is None:
+            s.status_message = "Nothing playing to download"
+            return
+        if s.is_track_downloaded(track.id):
+            s.status_message = "Already downloaded"
+            return
+        if s.is_track_downloading(track.id):
+            s.status_message = "Already downloading"
+            return
+        # One at a time — mark it now so a second 'd' on the same track is a no-op.
+        s.downloading_track_ids.add(track.id)
+        try:
+            path = await self._downloads.download(track)
+            s.downloaded_track_ids.add(track.id)
+            s.download_errors.pop(track.id, None)
+            s.status_message = f"Downloaded {track.title} to {path.parent.name}"
+        except Exception as ex:
+            s.download_errors[track.id] = str(ex)
+            s.status_message = f"Download failed: {track.title}"
+        finally:
+            s.downloading_track_ids.discard(track.id)
+        self.refresh_all()
 
     async def _block_current_artist(self) -> None:
         """Blocks the playing track's main artist: future radio/search results skip them, their

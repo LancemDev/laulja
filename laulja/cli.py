@@ -10,6 +10,7 @@ from .config import AppConfig
 from .services.audio.player import AudioPlayerService
 from .services.blocklist import DEFAULT_SHARED_SOURCES, ArtistBlocklist, update_shared_list
 from .services.cover_art_service import CoverArtService
+from .services.downloads import DownloadService
 from .services.lyrics_service import LyricsService
 from .services.music_service import MusicService
 
@@ -72,13 +73,28 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
     )
     blocklist = ArtistBlocklist().load()
     music = MusicService(client, session.cookies, blocklist)
-    player = AudioPlayerService(music, force_low_bandwidth=config.low_bandwidth)
+    downloads = DownloadService(session.cookies)
+    player = AudioPlayerService(
+        music,
+        force_low_bandwidth=config.low_bandwidth,
+        download_service=downloads,
+    )
     lyrics = LyricsService()
     cover_art = CoverArtService()
 
     from .ui.app import MusicApp
 
-    app = MusicApp(config, music, player, lyrics, cover_art, session, auth_service, blocklist)
+    app = MusicApp(
+        config,
+        music,
+        player,
+        lyrics,
+        cover_art,
+        session,
+        auth_service,
+        blocklist,
+        downloads,
+    )
     try:
         await app.run_async()
     finally:

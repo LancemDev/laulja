@@ -7,6 +7,7 @@ import time
 from typing import Callable, List, Optional, Tuple
 
 from ...models import Track
+from ..downloads import DownloadService
 from ..music_service import MusicService
 from . import sink as audio_sink
 from .spectrum import SpectrumAnalyzer
@@ -46,8 +47,14 @@ _PREFETCH_TTL_SECONDS = 20 * 60
 
 
 class AudioPlayerService:
-    def __init__(self, music: MusicService, force_low_bandwidth: bool = False):
+    def __init__(
+        self,
+        music: MusicService,
+        force_low_bandwidth: bool = False,
+        download_service: Optional[DownloadService] = None,
+    ):
         self._music = music
+        self._download_service = download_service
         self._analyzer = SpectrumAnalyzer()
         self._queue: List[Track] = []
         self._index = -1
@@ -282,12 +289,23 @@ class AudioPlayerService:
         self._samples_written = 0
         self.last_error = None
 
-        try:
-            url = await self._resolve_url(self.current)
-        except Exception as ex:
-            self.last_error = f"Couldn't resolve stream for {self.current.title}: {ex}"
-            self._is_playing = False
-            return
+        # A downloaded track plays from disk instead of streaming — that's the whole point of
+        # offline mode, and it also works when there's no network at all.
+        local = None
+        if self._download_service is not None:
+            try:
+                local = self._download_service.existing_path(self.current)
+            except Exception:
+                local = None
+        if local is not None:
+            url = str(local)
+        else:
+            try:
+                url = await self._resolve_url(self.current)
+            except Exception as ex:
+                self.last_error = f"Couldn't resolve stream for {self.current.title}: {ex}"
+                self._is_playing = False
+                return
 
         if not shutil.which("ffmpeg"):
             self.last_error = "ffmpeg not found — install it to enable playback."

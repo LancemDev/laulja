@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 from ..models import Lyrics, Playlist, Track
 
@@ -97,6 +97,31 @@ class AppState:
     # re-fetched from the API each time — ytmusicapi has no per-track "is this liked" lookup,
     # only the bulk get_liked_songs() list.
     liked_track_ids: Set[str] = field(default_factory=set)
+
+    # Tracks whose audio has been downloaded to the machine's Downloads folder for offline
+    # playback. Populated optimistically as downloads complete; a restart treats everything as
+    # not downloaded (files are re-detected lazily when played).
+    downloaded_track_ids: Set[str] = field(default_factory=set)
+    # Tracks currently being downloaded (one at a time, queued otherwise).
+    downloading_track_ids: Set[str] = field(default_factory=set)
+    # Last error per track id, shown so a failed download is visible rather than silent.
+    download_errors: Dict[str, str] = field(default_factory=dict)
+
+    @property
+    def download_count(self) -> int:
+        """Tracks whose download has finished."""
+        return len(self.downloaded_track_ids)
+
+    @property
+    def download_active_count(self) -> int:
+        """Tracks being downloaded right now (at most one, but counted for symmetry)."""
+        return len(self.downloading_track_ids)
+
+    def is_track_downloaded(self, track_id: str) -> bool:
+        return track_id in self.downloaded_track_ids
+
+    def is_track_downloading(self, track_id: str) -> bool:
+        return track_id in self.downloading_track_ids
 
     auth_label: str = "not signed in"
     is_authenticated: bool = False
