@@ -753,7 +753,13 @@ class PlayerInfoBar(Static):
         if s.now_playing:
             liked = " ♥" if s.now_playing.id in s.liked_track_ids else ""
             buffering = "  · buffering…" if s.is_buffering else ""
-            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}{buffering}"
+            if s.download_active_count:
+                download = f"  ↓{s.download_active_count}"
+            elif s.download_count:
+                download = f"  ✓{s.download_count}"
+            else:
+                download = ""
+            line = f"{icon}  {s.now_playing.title} — {s.now_playing.artist}{liked}{download}{buffering}"
         else:
             line = "Nothing playing  ·  Enter play · Space pause · n/p skip"
         pos = _format_seconds(s.position_seconds)
@@ -780,6 +786,7 @@ _KEY_ACTIONS = [
     ("Space", "pause"),
     ("n/p", "next/prev"),
     ("l", "like"),
+    ("d", "download"),
     ("b", "block artist"),
     ("/", "search"),
     ("f", "fullscreen"),
