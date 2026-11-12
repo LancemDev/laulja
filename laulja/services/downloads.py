@@ -1,8 +1,8 @@
 """Downloads audio tracks for offline playback.
 
 Tracks are saved into the machine's Downloads folder (``Downloads/laulja`` by default) as
-``<title> - <artist>.<ext>`` using YouTube's best audio-only stream — no re-encoding, so the
-file is exactly what YouTube serves and keeps its original quality.
+``<title> - <artist>.mp3``. YouTube's best audio-only stream is decoded to plain MP3 (with
+ID3 title/artist tags) so the files play anywhere, including standalone MP3 players.
 
 Up to :attr:`max_concurrent` downloads run at once; later requests wait on a semaphore. Each
 download reports progress (0.0–1.0) and status (queued / downloading / done / failed) via
@@ -28,7 +28,9 @@ from ..models import Track
 
 def _sanitize(value: str) -> str:
     """Make a value safe to use in a filename on any OS."""
-    value = re.sub(r'[<>:"/\\|?*]', "", value).strip()
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", value)
+    # Windows ignores trailing dots/spaces, so strip them to keep names predictable there.
+    value = value.strip().rstrip(".").strip()
     return value or "untitled"
 
 
@@ -52,6 +54,8 @@ class DownloadService:
         # downloads don't litter the root of Downloads.
         self._dir = Path(download_dir) if download_dir else Path.home() / "Downloads" / "laulja"
         self._dir.mkdir(parents=True, exist_ok=True)
+        # Clear temp files left behind by an interrupted download (app closed mid-transfer).
+        self._cleanup_stale_temp_files()
         # Up to ``max_concurrent`` downloads run at once; later requests wait on the semaphore.
         self._semaphore = asyncio.Semaphore(max(1, max_concurrent))
         # Guards the _progress / _status dicts, which are written from yt-dlp's worker thread
@@ -64,21 +68,45 @@ class DownloadService:
         # Completed download results: track_id -> final Path, so a duplicate 'd' on an
         # in-flight track can return the existing path without re-downloading.
         self._results: Dict[str, Path] = {}
+        # In-flight download tasks keyed by track id: a duplicate 'd' awaits the same task
+        # instead of starting a second download. Only touched from the event loop thread.
+        self._tasks: Dict[str, asyncio.Future] = {}
 
     # -- queries ------------------------------------------------------------
 
     def base_name(self, track: Track) -> str:
         return f"{_sanitize(track.title)} - {_sanitize(track.artist)}"
 
+    def _matches(self, base_name: str) -> list[Path]:
+        """Files named ``base_name.<ext>``.
+
+        Matched with a literal prefix check rather than a glob so titles containing glob
+        metacharacters (``[``, ``?``, ...) are found instead of misinterpreted as a pattern.
+        """
+        prefix = base_name + "."
+        try:
+            return [p for p in self._dir.iterdir() if p.name.startswith(prefix)]
+        except OSError:
+            return []
+
+    def _cleanup_stale_temp_files(self) -> None:
+        """Remove hidden temp files from a previous run that was killed mid-download."""
+        try:
+            for path in self._dir.glob(".laulja-dl-*"):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
     def is_downloaded(self, track: Track) -> bool:
-        """True if a completed file for this track already exists (any extension)."""
-        base = self._dir / self.base_name(track)
-        return any(self._dir.glob(f"{base.name}.*"))
+        """True if a completed file for this track already exists."""
+        return bool(self._matches(self.base_name(track)))
 
     def existing_path(self, track: Track) -> Optional[Path]:
         """The path of the completed file, if any — used to play a track from disk."""
-        base = self._dir / self.base_name(track)
-        matches = list(self._dir.glob(f"{base.name}.*"))
+        matches = self._matches(self.base_name(track))
         return matches[0] if matches else None
 
     def get_progress(self, track_id: str) -> float:
@@ -113,34 +141,46 @@ class DownloadService:
 
         Waits on the semaphore if ``max_concurrent`` downloads are already in flight.
         Raises on failure so the caller can record the error. Already-completed tracks
-        return their existing path without re-downloading.
+        return their existing path without re-downloading, and repeated calls for a track
+        that is already queued/downloading share the in-flight task instead of starting
+        a duplicate.
         """
         track_id = track.id
+        task = self._tasks.get(track_id)
+        if task is not None:
+            return await asyncio.shield(task)
         if self.is_downloaded(track):
             path = self.existing_path(track)
             if path is not None:
                 return path
 
+        task = asyncio.ensure_future(self._run_download(track))
+        self._tasks[track_id] = task
+        task.add_done_callback(lambda done: self._finish_task(track_id, task, done))
+        return await asyncio.shield(task)
+
+    def _finish_task(self, track_id: str, task: asyncio.Future, done: asyncio.Future) -> None:
+        if self._tasks.get(track_id) is task:
+            self._tasks.pop(track_id, None)
+        # Mark the exception as retrieved so a failure doesn't also log an "exception was
+        # never retrieved" warning when every awaiting caller was cancelled.
+        if not done.cancelled():
+            done.exception()
+
+    async def _run_download(self, track: Track) -> Path:
+        track_id = track.id
         # Mark as queued immediately so the UI can show it before the semaphore slot opens.
         with self._lock:
-            existing_status = self._status.get(track_id, "idle")
-            if existing_status in ("queued", "downloading"):
-                # Already in flight — wait for that one instead of starting a duplicate.
-                pass
-            else:
-                self._status[track_id] = "queued"
-                self._progress[track_id] = 0.0
+            self._status[track_id] = "queued"
+            self._progress[track_id] = 0.0
 
         async with self._semaphore:
             with self._lock:
-                if self._status.get(track_id) == "failed":
-                    raise RuntimeError(f"Previous download failed for {track.title}.")
                 self._status[track_id] = "downloading"
                 self._progress[track_id] = 0.0
 
             try:
-                final = await asyncio.to_thread(self._download_file, track, track_id)
-                return final
+                return await asyncio.to_thread(self._download_file, track, track_id)
             except Exception:
                 with self._lock:
                     self._status[track_id] = "failed"
@@ -156,24 +196,30 @@ class DownloadService:
         return path
 
     def _download_file(self, track: Track, track_id: str) -> Path:
-        base = self._dir / self.base_name(track)
-        # Unique temp stem — no file is created here, so the post-download glob only
+        # Unique temp stem — no file is created here, so the post-download lookup only
         # finds what yt-dlp actually wrote (no empty .part file to confuse it).
         stem = self._dir / f".laulja-dl-{uuid.uuid4().hex}"
         cookie_path = self._write_cookies()
-        downloaded: Optional[Path] = None
         try:
             runtimes = _available_js_runtimes()
-            # Strictly audio-only: no /best fallback, which can pull a video stream
-            # (WebM video) when a pure audio format isn't available. Prefer m4a/aac
-            # (universally playable, never mistaken for video) over webm.
+            # Strictly audio-only (``bestaudio`` never selects a video stream), decoded to
+            # plain MP3 by ffmpeg below so the file plays on any device, including basic
+            # MP3 players. Metadata is embedded so players show the real title/artist.
             opts: Dict[str, Any] = {
                 "quiet": True,
                 "no_warnings": True,
-                "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
+                "format": "bestaudio",
                 "noplaylist": True,
                 "outtmpl": str(stem) + ".%(ext)s",
                 "progress_hooks": [lambda d: self._progress_hook(d, track_id)],
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    },
+                    {"key": "FFmpegMetadata"},
+                ],
             }
             if runtimes:
                 opts["js_runtimes"] = runtimes
@@ -181,14 +227,16 @@ class DownloadService:
                 opts["cookiefile"] = cookie_path
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([f"https://music.youtube.com/watch?v={track_id}"])
-            matches = list(self._dir.glob(stem.name + ".*"))
+            matches = self._matches(stem.name)
             if not matches:
                 raise RuntimeError(f"yt-dlp did not produce a file for {track.title}.")
             downloaded = matches[0]
-            final = base.with_suffix(downloaded.suffix)
-            if final.exists():
-                final.unlink()
-            downloaded.rename(final)
+            # Plain concatenation, NOT Path.with_suffix(): with_suffix() treats a dot inside
+            # the title (e.g. "Song (feat. X) - Artist") as the extension separator and
+            # truncates everything after it.
+            final = self._dir / (self.base_name(track) + downloaded.suffix)
+            # replace() overwrites any previous copy atomically.
+            downloaded.replace(final)
             if not final.exists():
                 raise RuntimeError(f"Download did not produce {final}.")
             with self._lock:
@@ -197,13 +245,13 @@ class DownloadService:
                 self._results[track_id] = final
             return final
         finally:
-            if downloaded is not None:
-                for extra in self._dir.glob(stem.name + ".*"):
-                    if extra != downloaded:
-                        try:
-                            extra.unlink()
-                        except OSError:
-                            pass
+            # Always remove the temp stems — including a partial file when the download
+            # failed — so nothing but finished tracks is ever left in the folder.
+            for extra in self._matches(stem.name):
+                try:
+                    extra.unlink()
+                except OSError:
+                    pass
             if cookie_path:
                 try:
                     os.remove(cookie_path)
