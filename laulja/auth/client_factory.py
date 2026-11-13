@@ -34,3 +34,13 @@ def create(session: AuthSession, headers_auth_path: Optional[str] = None) -> YTM
         "authorization": "SAPISIDHASH",  # placeholder — recomputed per request, see above
     }
     return YTMusic(auth=headers, location=session.geographical_location)
+
+
+def create_anonymous(location: str = "") -> YTMusic:
+    """Builds a client with no account cookies.
+
+    Song-seeded radio uses this on purpose: when the request carries the listener's
+    session, YouTube folds their listening history into the mix (so an afrobeats seed can
+    pull in amapiano tracks). Without cookies the radio follows only the seed track's vibe.
+    """
+    return YTMusic(location=location)
