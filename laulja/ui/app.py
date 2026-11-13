@@ -27,6 +27,7 @@ from .widgets import (
     CoverArtPanel,
     HeaderBar,
     LyricsPanel,
+    PaneSplitter,
     PlayerInfoBar,
     PlaylistsPanel,
     QueuePanel,
@@ -84,9 +85,13 @@ Screen {
 }
 
 #left {
-    width: 28;
+    width: 22%;
+    min-width: 18;
 }
 #left.hidden {
+    display: none;
+}
+#left-splitter.hidden {
     display: none;
 }
 
@@ -123,9 +128,13 @@ Screen {
 }
 
 #lyrics {
-    width: 34;
+    width: 26%;
+    min-width: 22;
 }
 #lyrics.hidden {
+    display: none;
+}
+#lyrics-splitter.hidden {
     display: none;
 }
 #lyrics.fill {
@@ -224,9 +233,27 @@ class MusicApp(App[None]):
                 yield TracksPanel(self.state, id="tracks")
                 yield QueuePanel(self.state, id="queue")
                 yield PlaylistsPanel(self.state, id="playlists")
+            yield PaneSplitter(
+                self.state,
+                "#left",
+                "#lyrics",
+                "left_pane_width_pct",
+                direction=1,
+                min_width=18,
+                id="left-splitter",
+            )
             with Vertical(id="center"):
                 yield CoverArtPanel(self.state, id="cover")
                 yield BarVisualizerPanel(self.state, id="bar")
+            yield PaneSplitter(
+                self.state,
+                "#lyrics",
+                "#left",
+                "lyrics_pane_width_pct",
+                direction=-1,
+                min_width=22,
+                id="lyrics-splitter",
+            )
             yield LyricsPanel(self.state, id="lyrics")
         with Vertical(id="player"):
             yield PlayerInfoBar(self.state, id="player-info")
@@ -980,22 +1007,30 @@ class MusicApp(App[None]):
         left = self.query_one("#left")
         center = self.query_one("#center")
         lyrics = self.query_one("#lyrics")
+        left_splitter = self.query_one("#left-splitter")
+        lyrics_splitter = self.query_one("#lyrics-splitter")
 
         if s.full_screen_mode == FullScreenMode.LYRICS:
             left.add_class("hidden")
             center.add_class("hidden")
             lyrics.remove_class("hidden")
             lyrics.add_class("fill")
+            left_splitter.add_class("hidden")
+            lyrics_splitter.add_class("hidden")
         elif s.full_screen_mode == FullScreenMode.COVER_BAR or s.is_sidebar_collapsed:
             left.add_class("hidden")
             center.remove_class("hidden")
             lyrics.add_class("hidden")
             lyrics.remove_class("fill")
+            left_splitter.add_class("hidden")
+            lyrics_splitter.add_class("hidden")
         else:
             left.remove_class("hidden")
             center.remove_class("hidden")
             lyrics.remove_class("hidden")
             lyrics.remove_class("fill")
+            left_splitter.remove_class("hidden")
+            lyrics_splitter.remove_class("hidden")
 
         panels = {
             LeftFocus.TRACKS: self.query_one("#tracks"),
@@ -1009,6 +1044,19 @@ class MusicApp(App[None]):
             else:
                 panel.remove_class("hidden")
                 panel.set_class(s.is_sidebar_paged, "fill")
+
+        # Inline widths override the stylesheet, so reapply them whenever the layout mode
+        # changes (e.g. leaving full-screen lyrics must restore the dragged width, not 1fr).
+        self._apply_pane_widths()
+
+    def _apply_pane_widths(self) -> None:
+        s = self.state
+        self.query_one("#left").styles.width = f"{s.left_pane_width_pct:.2f}%"
+        self.query_one("#lyrics").styles.width = (
+            "1fr"
+            if s.full_screen_mode == FullScreenMode.LYRICS
+            else f"{s.lyrics_pane_width_pct:.2f}%"
+        )
 
     # ---- rendering -----------------------------------------------------------
 
