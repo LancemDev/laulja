@@ -12,6 +12,7 @@ import pyfiglet
 from PIL import Image as PILImage
 from rich.markup import escape
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -166,7 +167,7 @@ def _format_short_duration(d: Optional[timedelta]) -> str:
 
 def _count_noun(count: int, noun: str) -> str:
     """`3 tracks`, `1 playlist` — keeps the search-result subtitles short enough to fit the
-    sidebar's fixed 28 columns at the default terminal size."""
+    sidebar's default width at the default terminal size."""
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
@@ -193,6 +194,87 @@ def _format_seconds(total_seconds: float) -> str:
     h, rem = divmod(total, 3600)
     m, sec = divmod(rem, 60)
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+class PaneSplitter(Static):
+    """A one-column drag handle between two body panes.
+
+    Dragging it resizes the adjacent pane and stores the result as a percentage of the body,
+    so the pane keeps that proportion when the terminal is resized instead of snapping back
+    to a fixed column count.
+    """
+
+    DEFAULT_CSS = """
+    PaneSplitter {
+        width: 1;
+        height: 1fr;
+        background: $primary 25%;
+    }
+    PaneSplitter:hover {
+        background: $primary 75%;
+    }
+    """
+
+    def __init__(
+        self,
+        state: AppState,
+        target: str,
+        other: str,
+        pct_attr: str,
+        *,
+        direction: int = 1,
+        min_width: int = 16,
+        center_min_width: int = 30,
+        **kwargs,
+    ) -> None:
+        super().__init__("", **kwargs)
+        self.state = state
+        self._target_selector = target
+        self._other_selector = other
+        self._pct_attr = pct_attr
+        # +1 when the pane is left of the divider (drag right = wider), -1 when it's right of it.
+        self._direction = direction
+        self._min_width = min_width
+        self._center_min_width = center_min_width
+        self._dragging = False
+        self._start_x = 0
+        self._start_width = 0
+        self._body_width = 0
+        self._max_width = 0
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        if event.button != 1:
+            return
+        body_width = self.app.query_one("#body").size.width
+        other_width = self.app.query_one(self._other_selector).outer_size.width
+        # Never let the dragged pane squeeze the center below a usable width: cap it at what
+        # remains after the other side pane, both one-column dividers, and the center minimum.
+        self._max_width = max(
+            self._min_width, body_width - other_width - 2 - self._center_min_width
+        )
+        self._start_x = event.screen_x
+        self._start_width = self.app.query_one(self._target_selector).outer_size.width
+        self._body_width = body_width
+        self._dragging = True
+        self.capture_mouse()
+        event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if not self._dragging:
+            return
+        width = self._start_width + (event.screen_x - self._start_x) * self._direction
+        width = max(self._min_width, min(self._max_width, width))
+        pct = 100.0 * width / max(1, self._body_width)
+        setattr(self.state, self._pct_attr, pct)
+        self.app.query_one(self._target_selector).styles.width = f"{pct:.2f}%"
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if not self._dragging:
+            return
+        self._dragging = False
+        self.release_mouse()
+        event.stop()
 
 
 class HeaderBar(Static):

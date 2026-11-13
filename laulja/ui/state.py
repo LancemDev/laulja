@@ -55,6 +55,11 @@ class AppState:
     is_sidebar_paged: bool = True
     is_minimal: bool = False
     is_loading_library: bool = True
+    # Sidebar/lyrics widths as percentages of the body, so they keep their proportion when the
+    # terminal is enlarged instead of staying at a fixed column count. Dragging a divider
+    # updates these (see PaneSplitter).
+    left_pane_width_pct: float = 22.0
+    lyrics_pane_width_pct: float = 26.0
 
     # Full-screen ambient visuals ("w") that run behind whatever's currently playing, like a
     # lofi player's animated backdrop — the sidebar/lyrics/cover panels are hidden entirely
