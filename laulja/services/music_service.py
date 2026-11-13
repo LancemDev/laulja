@@ -168,9 +168,15 @@ class MusicService:
         client: YTMusic,
         cookies: Optional[List[Cookie]] = None,
         blocklist: Optional[ArtistBlocklist] = None,
+        radio_client: Optional[YTMusic] = None,
     ):
         self._client = client
         self._cookies = list(cookies or [])
+        # Song-seeded radio deliberately uses an unauthenticated client. With the listener's
+        # cookies attached, YouTube mixes their listening history into the radio (an afrobeats
+        # seed can surface amapiano tracks); without cookies it follows the seed track's vibe.
+        # Falls back to the main client when not given one (e.g. already-unauthenticated use).
+        self._radio_client = radio_client or client
         # Applied to recommendations (radio) and search only — library and playlist contents are
         # the user's own picks, so they're left as-is.
         self._blocklist = blocklist
@@ -254,8 +260,23 @@ class MusicService:
     async def get_radio_tracks(self, track_id: str, limit: int = 25) -> List[Track]:
         """Starts a YouTube Music "radio" (what the web/app UI calls a Mix) seeded from
         `track_id` — the same continuous, similar-vibe queue YouTube Music builds for you when
-        you play an individual song outside a playlist. The seed track is included first."""
-        result = await asyncio.to_thread(self._client.get_watch_playlist, track_id, None, limit, True)
+        you play an individual song outside a playlist. The seed track is included first.
+
+        Uses :attr:`_radio_client` (unauthenticated) so the mix is driven by the seed song
+        itself rather than the account's listening history. If anonymous radio is unavailable
+        (e.g. region/consent checks), falls back to the signed-in client so playback can
+        continue, even though that mix may be personalized.
+        """
+        try:
+            result = await asyncio.to_thread(
+                self._radio_client.get_watch_playlist, track_id, None, limit, True
+            )
+        except Exception:
+            if self._radio_client is self._client:
+                raise
+            result = await asyncio.to_thread(
+                self._client.get_watch_playlist, track_id, None, limit, True
+            )
         tracks = result.get("tracks") or []
         return self._apply_blocklist([t for t in (_to_track(item) for item in tracks) if t is not None])[0]
 

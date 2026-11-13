@@ -72,7 +72,14 @@ async def _run_tui(auth_service: AuthService, config: AppConfig) -> None:
         asyncio.to_thread(client_factory.create, session, config.headers_auth_path),
     )
     blocklist = ArtistBlocklist().load()
-    music = MusicService(client, session.cookies, blocklist)
+    music = MusicService(
+        client,
+        session.cookies,
+        blocklist,
+        # Song-seeded radio uses an anonymous client so the queue follows the seed song's
+        # vibe instead of the account's listening history.
+        radio_client=client_factory.create_anonymous(config.geographical_location),
+    )
     downloads = DownloadService(session.cookies)
     player = AudioPlayerService(
         music,
