@@ -126,12 +126,10 @@ class AuthService:
         if identity is None or _session_identity(detected) != identity:
             return None
 
-        # Keep the stored jar's order (cookies_to_header's last-one-wins dedup relies on it)
-        # and replace matching names with the browser's newer values; append anything new.
-        merged = {c.name: c for c in session.cookies}
-        for cookie in detected:
-            merged[cookie.name] = cookie
-        cookies = list(merged.values())
+        # Use the browser's full jar for this account. Browser cookie DBs can contain multiple
+        # rows with the same name (different values/paths) — collapsing by name breaks yt-dlp.
+        # The identity check above guarantees we only do this for the same signed-in account.
+        cookies = list(detected)
 
         candidate = AuthSession(
             cookies=cookies,

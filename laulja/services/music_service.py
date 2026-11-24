@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from ytmusicapi import YTMusic
 
-from ..auth.cookies import Cookie, to_netscape
+from ..auth.cookies import Cookie, cookies_for_ytdlp, to_netscape
 from ..models import ArtistRef, Playlist, SearchResults, Track
 from .blocklist import ArtistBlocklist
 
@@ -325,10 +325,11 @@ def _resolve_stream_url(track_id: str, low_bandwidth: bool = False, cookies: Opt
     # session cookies ytmusicapi uses. A fresh owner-only file per call, since yt-dlp writes the
     # jar back on close and the prefetch resolve can run concurrently with the current one.
     cookie_path: Optional[str] = None
-    if cookies:
+    ytdlp_cookies = cookies_for_ytdlp(cookies or [])
+    if ytdlp_cookies:
         fd, cookie_path = tempfile.mkstemp(prefix="laulja-cookies-", suffix=".txt")
         with os.fdopen(fd, "w") as f:
-            f.write(to_netscape(cookies))
+            f.write(to_netscape(ytdlp_cookies))
         opts["cookiefile"] = cookie_path
 
     try:

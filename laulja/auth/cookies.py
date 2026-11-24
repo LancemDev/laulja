@@ -11,6 +11,11 @@ Mirrors CookieFileParser.cs from the original C# project.
 """
 
 AUTH_COOKIE_NAMES = {"SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"}
+# YouTube rotates these timestamp cookies while the browser is open. ytmusicapi needs the
+# fresh values for web-session auth, but passing them to yt-dlp can trigger a logged-in
+# format-gating response ("Requested format is not available"). Strip them at the yt-dlp
+# boundary only; the on-disk jar keeps them for ytmusicapi/browser refresh.
+_YTDLP_SKIP_COOKIE_NAMES = {"__Secure-1PSIDTS", "__Secure-3PSIDTS"}
 
 
 @dataclass
@@ -49,6 +54,16 @@ def cookies_to_header(cookies: List[Cookie]) -> str:
     # matching create_cookie's/the callers' newest-first ordering.
     deduped = {c.name: c for c in cookies}
     return "; ".join(f"{c.name}={c.value}" for c in deduped.values())
+
+
+def cookies_for_ytdlp(cookies: List[Cookie]) -> List[Cookie]:
+    """Cookies safe to hand to yt-dlp.
+
+    Fresh PSIDTS timestamp cookies can make YouTube return a logged-in response that yt-dlp
+    can't extract formats from. Everything else (including SAPISID/SID/HSID) is kept so yt-dlp
+    still presents the same account session.
+    """
+    return [c for c in cookies if c.name not in _YTDLP_SKIP_COOKIE_NAMES]
 
 
 def to_netscape(cookies: List[Cookie]) -> str:

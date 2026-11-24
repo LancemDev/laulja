@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 
 import yt_dlp
 
-from ..auth.cookies import to_netscape
+from ..auth.cookies import cookies_for_ytdlp, to_netscape
 from ..models import Track
 
 
@@ -188,11 +188,12 @@ class DownloadService:
                 raise
 
     def _write_cookies(self) -> Optional[str]:
-        if not self._cookies:
+        ytdlp_cookies = cookies_for_ytdlp(self._cookies)
+        if not ytdlp_cookies:
             return None
         fd, path = tempfile.mkstemp(prefix="laulja-dl-cookies-", suffix=".txt")
         with os.fdopen(fd, "w") as f:
-            f.write(to_netscape(self._cookies))
+            f.write(to_netscape(ytdlp_cookies))
         return path
 
     def _download_file(self, track: Track, track_id: str) -> Path:
