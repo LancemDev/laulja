@@ -13,6 +13,16 @@ from .cookies import Cookie, has_auth_cookies, parse_file, parse_header
 from .session import AuthSession, AuthStatus
 
 
+def _session_identity(cookies: List[Cookie]) -> Optional[str]:
+    """The value that identifies *which* account a cookie jar belongs to.
+
+    The timestamp/CSRF cookies rotate constantly, so they can't be compared across jars —
+    but the PAPISID/SAPISID identity stays the same for a given signed-in account.
+    """
+    by_name = {c.name: c.value for c in cookies}
+    return by_name.get("__Secure-3PAPISID") or by_name.get("SAPISID")
+
+
 class AuthService:
     def __init__(
         self,
@@ -80,7 +90,68 @@ class AuthService:
 
         if not self.validate_with_api:
             return session
-        return self.validate(session)
+        validated = self.validate(session)
+        if validated.is_authenticated:
+            return validated
+
+        # YouTube rotates the timestamp/CSRF cookies (__Secure-3PSIDTS, SIDCC, ...) while you
+        # browse. The app stores a snapshot, so those copies eventually go stale even though
+        # the account's identity cookies are still valid. Before asking for a fresh sign-in,
+        # merge in what the user's browser currently has — but only for the same account.
+        refreshed = self._refresh_from_browser(validated)
+        return refreshed or validated
+
+    def _refresh_from_browser(self, session: AuthSession) -> Optional[AuthSession]:
+        """Re-import the browser's current YouTube cookies to refresh rotated ones.
+
+        Only succeeds when the browser is signed into the same account (the identity cookie
+        matches) and the merged jar validates, so this never silently switches accounts.
+        Returns None if there's nothing usable, leaving the caller to prompt for sign-in.
+        """
+        # A headers_auth.json takes precedence in client_factory.create(), so merged
+        # cookies.txt entries would be ignored and the same stale headers would be validated.
+        if self.headers_auth_path:
+            return None
+
+        try:
+            from . import browser_cookies
+
+            detected, source = browser_cookies.try_read_youtube_cookies()
+        except Exception:
+            return None
+
+        if not detected or not has_auth_cookies(detected):
+            return None
+        identity = _session_identity(session.cookies)
+        if identity is None or _session_identity(detected) != identity:
+            return None
+
+        # Keep the stored jar's order (cookies_to_header's last-one-wins dedup relies on it)
+        # and replace matching names with the browser's newer values; append anything new.
+        merged = {c.name: c for c in session.cookies}
+        for cookie in detected:
+            merged[cookie.name] = cookie
+        cookies = list(merged.values())
+
+        candidate = AuthSession(
+            cookies=cookies,
+            visitor_data=session.visitor_data,
+            po_token=session.po_token,
+            geographical_location=session.geographical_location,
+            cookies_path=session.cookies_path,
+            status=AuthStatus.AUTHENTICATED,
+        )
+        validated = self.validate(candidate)
+        if not validated.is_authenticated:
+            return None
+
+        saved = self.save_cookies(cookies)
+        saved.status_detail = (
+            f"Refreshed {len(cookies)} cookies from {source} → {self.cookies_path}"
+            if source
+            else f"Refreshed {len(cookies)} cookies → {self.cookies_path}"
+        )
+        return saved
 
     def validate(self, session: AuthSession) -> AuthSession:
         try:
