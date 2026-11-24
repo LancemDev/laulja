@@ -141,8 +141,25 @@ class AudioPlayerService:
     def visualizer_levels(self) -> List[int]:
         return self._analyzer.bars
 
+    def _warn_other_instance(self) -> None:
+        """Notification for when plays from *this* instance may not take effect because
+        another laulja instance is already running elsewhere (see
+        services/instance_detection.py). Surfaces via player.notice in the app tick loop."""
+        try:
+            from ..instance_detection import other_laulja_pids
+
+            pids = other_laulja_pids()
+        except Exception:
+            pids = []
+        if pids:
+            self.notice = (
+                f"laulja already open elsewhere (pid(s) {', '.join(str(p) for p in pids)}) — "
+                "plays from here may not take effect"
+            )
+
     async def play(self, track: Track) -> None:
         async with self._action_lock:
+            self._warn_other_instance()
             self._queue = [track]
             self._index = 0
             self._queue_is_radio = False
@@ -150,6 +167,7 @@ class AudioPlayerService:
 
     async def play_queue(self, tracks: List[Track], start_index: int = 0) -> None:
         async with self._action_lock:
+            self._warn_other_instance()
             self._queue = list(tracks)
             self._index = max(0, min(start_index, len(self._queue) - 1)) if self._queue else -1
             self._queue_is_radio = False
@@ -168,6 +186,7 @@ class AudioPlayerService:
         going with similar-vibe tracks instead of just looping the one song. Falls back to
         looping `track` alone if the radio fetch fails or comes back empty."""
         async with self._action_lock:
+            self._warn_other_instance()
             try:
                 tracks = await self._music.get_radio_tracks(track.id)
             except Exception:
@@ -232,6 +251,7 @@ class AudioPlayerService:
         """Jumps straight to a specific queue position — the queue view's "play this one now"
         action, rather than stepping one track at a time via next/previous."""
         async with self._action_lock:
+            self._warn_other_instance()
             if not (0 <= index < len(self._queue)):
                 return
             self._index = index
