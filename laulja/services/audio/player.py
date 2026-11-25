@@ -536,8 +536,9 @@ class AudioPlayerService:
                 self._samples_written += len(chunk) // BYTES_PER_FRAME
         except asyncio.CancelledError:
             pass  # expected on stop/skip — the pipeline is being torn down deliberately
-        except Exception:
-            self._track_ended = True
+        except Exception as ex:
+            self.last_error = f"Playback error: {ex}"
+            self._is_playing = False
 
     async def _check_incomplete_stream(self, ffmpeg: asyncio.subprocess.Process) -> None:
         """ffmpeg's stdout closing normally means it decoded the whole track — but it also
