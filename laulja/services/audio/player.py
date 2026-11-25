@@ -229,6 +229,16 @@ class AudioPlayerService:
         self._reconnect_at = None
         self._reconnect_attempts = 0
 
+    def _schedule_reconnect(self, reason: str) -> None:
+        """Auto-retry the current track after a transient stream/network failure."""
+        if self._user_paused or self._index < 0 or self.current is None:
+            return
+        delay = _RECONNECT_DELAYS[min(self._reconnect_attempts, len(_RECONNECT_DELAYS) - 1)]
+        self._reconnect_attempts += 1
+        self._reconnect_at = time.monotonic() + delay
+        self._is_playing = False
+        self.last_error = f"{reason} Retrying in {delay:.0f}s…"
+
     async def toggle_pause(self) -> None:
         if self.current is None:
             return
@@ -348,10 +358,27 @@ class AudioPlayerService:
             return removed
 
     def tick(self) -> None:
-        if not self._track_ended:
+        if self._track_ended:
+            self._track_ended = False
+            asyncio.ensure_future(self.next_track())
             return
-        self._track_ended = False
-        asyncio.ensure_future(self.next_track())
+
+        if (
+            self._reconnect_at is not None
+            and not self._user_paused
+            and not self._pipeline_alive()
+            and self._index >= 0
+            and time.monotonic() >= self._reconnect_at
+        ):
+            self._reconnect_at = None
+            asyncio.ensure_future(self._retry_current())
+
+    async def _retry_current(self) -> None:
+        async with self._action_lock:
+            if self._user_paused or self._pipeline_alive() or self._index < 0:
+                return
+            self._track_ended = False
+            await self._start_current()
 
     async def _start_current(self) -> None:
         await self._stop_pipeline()
@@ -375,8 +402,7 @@ class AudioPlayerService:
             try:
                 url = await self._resolve_url(self.current)
             except Exception as ex:
-                self.last_error = f"Couldn't resolve stream for {self.current.title}: {ex}"
-                self._is_playing = False
+                self._schedule_reconnect(f"Couldn't resolve stream for {self.current.title}: {ex}")
                 return
 
         if not shutil.which("ffmpeg"):
@@ -422,6 +448,8 @@ class AudioPlayerService:
         self._stderr_task = asyncio.ensure_future(self._drain_stderr(ffmpeg))
         self._reader_task = asyncio.ensure_future(self._read_ahead(ffmpeg))
         self._pump_task = asyncio.ensure_future(self._pump(ffmpeg, sink))
+        self._reconnect_at = None
+        self._reconnect_attempts = 0
         self._schedule_prefetch()
 
     async def _resolve_url(self, track: Track) -> str:
@@ -571,8 +599,12 @@ class AudioPlayerService:
                     # before it's heard — the track visibly (audibly) cuts short of the end.
                     await self._drain_sink(sink)
                     await self._check_incomplete_stream(ffmpeg)
-                    if not self.last_error:
-                        self._note_track_finished()
+                    if self.last_error:
+                        # Network drop / incomplete stream: retry the same track instead of
+                        # advancing through the rest of the queue while offline.
+                        self._schedule_reconnect(self.last_error)
+                        return
+                    self._note_track_finished()
                     self._track_ended = True
                     return
 
@@ -589,8 +621,7 @@ class AudioPlayerService:
         except asyncio.CancelledError:
             pass  # expected on stop/skip — the pipeline is being torn down deliberately
         except Exception as ex:
-            self.last_error = f"Playback error: {ex}"
-            self._is_playing = False
+            self._schedule_reconnect(f"Playback error: {ex}")
 
     async def _check_incomplete_stream(self, ffmpeg: asyncio.subprocess.Process) -> None:
         """ffmpeg's stdout closing normally means it decoded the whole track — but it also
