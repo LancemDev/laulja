@@ -45,6 +45,10 @@ _SLOW_START_SECONDS = 8.0
 # Stream URLs are short-lived (hours), so a prefetched one is only trusted for a while.
 _PREFETCH_TTL_SECONDS = 20 * 60
 
+# Network recovery: when a stream fails for a likely-transient reason, retry the same track
+# with backoff instead of leaving the player dead until the user presses next/prev.
+_RECONNECT_DELAYS = (3.0, 5.0, 10.0, 20.0, 30.0)
+
 
 class AudioPlayerService:
     def __init__(
@@ -103,6 +107,12 @@ class AudioPlayerService:
         # by whoever displays it — unlike last_error, it isn't a playback failure.
         self.notice: Optional[str] = None
 
+        # Network recovery state. _user_paused distinguishes an explicit pause from a pipeline
+        # that died on its own (network drop, resolve failure), so we only auto-retry the latter.
+        self._user_paused = False
+        self._reconnect_at: Optional[float] = None
+        self._reconnect_attempts = 0
+
     @property
     def is_buffering(self) -> bool:
         """True while playback is waiting for more audio to arrive (start-up or after a stall)."""
@@ -160,6 +170,8 @@ class AudioPlayerService:
     async def play(self, track: Track) -> None:
         async with self._action_lock:
             self._warn_other_instance()
+            self._user_paused = False
+            self._cancel_reconnect()
             self._queue = [track]
             self._index = 0
             self._queue_is_radio = False
@@ -168,6 +180,8 @@ class AudioPlayerService:
     async def play_queue(self, tracks: List[Track], start_index: int = 0) -> None:
         async with self._action_lock:
             self._warn_other_instance()
+            self._user_paused = False
+            self._cancel_reconnect()
             self._queue = list(tracks)
             self._index = max(0, min(start_index, len(self._queue) - 1)) if self._queue else -1
             self._queue_is_radio = False
@@ -187,6 +201,8 @@ class AudioPlayerService:
         looping `track` alone if the radio fetch fails or comes back empty."""
         async with self._action_lock:
             self._warn_other_instance()
+            self._user_paused = False
+            self._cancel_reconnect()
             try:
                 tracks = await self._music.get_radio_tracks(track.id)
             except Exception:
@@ -206,20 +222,52 @@ class AudioPlayerService:
             self._index = index
             await self._start_current()
 
+    def _pipeline_alive(self) -> bool:
+        return self._pump_task is not None and not self._pump_task.done()
+
+    def _cancel_reconnect(self) -> None:
+        self._reconnect_at = None
+        self._reconnect_attempts = 0
+
     async def toggle_pause(self) -> None:
         if self.current is None:
             return
-        self._is_playing = not self._is_playing
+
+        # If the pipeline died (network drop, stream cut short, resolve failure), toggling
+        # play/pause should rebuild the current track instead of flipping a flag on a dead pump.
+        pipeline_dead = not self._pipeline_alive() and self._index >= 0
+        if pipeline_dead:
+            async with self._action_lock:
+                if not self._pipeline_alive() and self._index >= 0:
+                    self._track_ended = False
+                    self._user_paused = False
+                    self._reconnect_at = None
+                    self._reconnect_attempts = 0
+                    self._is_playing = True
+                    await self._start_current()
+            return
+
         if not self._is_playing:
-            # Only _SoundDeviceSink queues audio this deeply ahead of the device (see
-            # sink.py's clear_pending) — the CLI-player fallbacks have no equivalent backlog to
-            # drop, so this is a no-op for them via getattr rather than an isinstance check.
-            clear_pending = getattr(self._sink, "clear_pending", None)
-            if clear_pending is not None:
-                clear_pending()
+            self._user_paused = False
+            self._reconnect_at = None
+            self._reconnect_attempts = 0
+            self._is_playing = True
+            return
+
+        self._user_paused = True
+        self._reconnect_at = None
+        self._is_playing = False
+        # Only _SoundDeviceSink queues audio this deeply ahead of the device (see
+        # sink.py's clear_pending) — the CLI-player fallbacks have no equivalent backlog to
+        # drop, so this is a no-op for them via getattr rather than an isinstance check.
+        clear_pending = getattr(self._sink, "clear_pending", None)
+        if clear_pending is not None:
+            clear_pending()
 
     async def next_track(self) -> None:
         async with self._action_lock:
+            self._user_paused = False
+            self._cancel_reconnect()
             if not self._queue:
                 return
             if self._queue_is_radio and self._index == len(self._queue) - 1:
@@ -242,6 +290,8 @@ class AudioPlayerService:
 
     async def previous_track(self) -> None:
         async with self._action_lock:
+            self._user_paused = False
+            self._cancel_reconnect()
             if not self._queue or self._index <= 0:
                 return
             self._index -= 1
@@ -252,6 +302,8 @@ class AudioPlayerService:
         action, rather than stepping one track at a time via next/previous."""
         async with self._action_lock:
             self._warn_other_instance()
+            self._user_paused = False
+            self._cancel_reconnect()
             if not (0 <= index < len(self._queue)):
                 return
             self._index = index
