@@ -411,17 +411,24 @@ class AudioPlayerService:
             return
 
         try:
-            ffmpeg = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                # YouTube's CDN (googlevideo) URLs occasionally drop the connection mid-stream
-                # before the whole track has been sent. Without reconnect handling, ffmpeg just
-                # treats that dropped connection as EOF and exits — which _pump can't tell apart
-                # from a genuinely finished track, so playback silently stops short instead of
-                # erroring or retrying.
-                "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_at_eof", "1",
-                "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5",
+            # YouTube's CDN (googlevideo) URLs occasionally drop the connection mid-stream
+            # before the whole track has been sent. Without reconnect handling, ffmpeg just
+            # treats that dropped connection as EOF and exits — which _pump can't tell apart
+            # from a genuinely finished track, so playback silently stops short instead of
+            # erroring or retrying. Only valid for HTTP(S) inputs: passing `-reconnect*` for a
+            # local file makes ffmpeg exit with "Option reconnect not found".
+            args = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+            if url.startswith(("http://", "https://")):
+                args += [
+                    "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_at_eof", "1",
+                    "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5",
+                ]
+            args += [
                 "-i", url,
                 "-vn", "-ac", str(CHANNELS), "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
+            ]
+            ffmpeg = await asyncio.create_subprocess_exec(
+                *args,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
         except Exception as ex:
